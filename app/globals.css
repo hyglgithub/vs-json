@@ -40,7 +40,7 @@ button { font: inherit; }
 .brand-name { color: var(--fg); font-size: 16px; font-weight: 600; letter-spacing: .3px; }
 .actions { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
 /* ---- 设置面板 ----
-   底色**透明**，露出 .pane 的 --bg —— 树形视图 / 历史记录 / AI 都在这一层底色上，
+   底色**透明**，露出 .pane 的 --bg —— 树形视图 / 保存记录 / 帮助 都在这一层底色上，
    设置原来自己铺了 --panel2，比它们亮一块，一眼就看出"不是一伙的"。
    布局是一行一项：标签定宽，控件吃掉剩余宽度，于是所有控件的左边缘对齐成一竖线。 */
 .pane > .settings { display: flex; flex-direction: column; padding: 4px 0 12px; border-bottom: 0; background: transparent; flex: 1; min-height: 0; overflow: auto; }
@@ -65,8 +65,7 @@ button { font: inherit; }
 .setting-check input[type="checkbox"]:checked { background-color: var(--accent); border-color: var(--accent); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 12.5l5.5 5.5L20 6.5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: center; background-size: 12px 12px; }
 .setting-check input[type="checkbox"]:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(76, 141, 255, .35); }
 .setting-check span { color: var(--muted); font-size: 12.5px; line-height: 1.55; }
-.settings-sep { flex: none; height: 1px; margin: 6px 12px; background: var(--border); }
-/* 「恢复默认」推到标题栏最右（同 .hist-clear / .ai-run 的做法） */
+/* 「恢复默认」推到标题栏最右（同 .hist-clear 的做法） */
 .set-reset { margin-left: auto; }
 
 /* ---- 输入控件 ----
@@ -86,7 +85,7 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
 .splitter { width: 4px; flex: none; cursor: col-resize; background: transparent; border-radius: 2px; }
 .splitter:hover, .splitter:active { background: var(--accent); }
 .activity { width: 46px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
-.side-body > .pane, .side-body > .ai { border-radius: 8px 0 0 8px; border-right: 0; }
+.side-body > .pane { border-radius: 8px 0 0 8px; border-right: 0; }
 .side-body + .activity { margin-left: -1px; border: 1px solid var(--line); border-left: 0; border-radius: 0 8px 8px 0; }
 .act { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: none; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer; font-size: 15px; }
 .act:hover { color: var(--fg); background: rgba(76, 141, 255, .08); }
@@ -94,7 +93,6 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
 .act:active { color: var(--accent); background: rgba(76, 141, 255, .16); }
 .side-body { flex: none; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .side-body > .pane { flex: 1; }
-.side-body > .ai { flex: 1; }
 .pane { display: flex; flex-direction: column; background: var(--bg); min-height: 0; min-width: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 /* z-index 5 而不是 3：行号层是 3，层级打平时 DOM 靠后的会赢，而 .editor-nums 在 .editor-wrap 里，
    DOM 上排在 .pane-head 之后。取 3 的话下拉菜单和悬停提示都会被行号层盖住（号码和三角画在菜单上）。 */
@@ -198,8 +196,6 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
    那样就又出现「同一个界面里按钮颜色不统一」的问题。 */
 .tool-btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; background: none; border: 1px solid transparent; border-radius: 8px; color: var(--muted); cursor: pointer; white-space: nowrap; }
 .tool-btn svg { flex: none; }
-/* 开始分析按钮推到 AI 面板标题栏最右（同 .hist-clear 的做法） */
-.ai-run { margin-left: auto; }
 /* 下拉菜单。原来整套都锁在 .actions 里，现在设置面板的下拉也用同一套，
    所以放开成全局类——**在 .actions 里效果完全一样**，只有那条悬停桥接
    （.actions .menu::before）仍留在 .actions 里，因为设置的下拉是点开点关、不靠悬停。 */
@@ -279,8 +275,6 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
    改背景色就等于没提示。box-shadow 不占布局，不会让 <pre> 与 textarea 错位。
    注意 JSX 仍保留 "active" 类名——搜索滚动定位靠 querySelector(".mark.active")，不能删。 */
 .mark.active { box-shadow: 0 0 0 2px var(--accent); }
-.ai { background: var(--bg); display: flex; flex-direction: column; min-height: 0; min-width: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.ai-output { margin: 0; padding: 10px; overflow: auto; white-space: pre-wrap; word-break: break-word; flex: 1; min-height: 0; font: inherit; }
 .searchbar { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: flex; align-items: center; justify-content: center; min-width: 0; z-index: 5; }
 /* 统计信息现在挂在标题（.brand）右边，不再顶到顶栏最右端。
    原来那条 margin-left:auto 是把它推到右边缘用的，留着会把它从标题旁推开；
@@ -371,6 +365,6 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
   .splitter { display: none; }
   .side-body { width: 100% !important; height: 50%; }
   .activity { width: 100%; height: 46px; flex-direction: row; justify-content: center; padding: 0; }
-  .side-body > .pane, .side-body > .ai { border-radius: 8px; }
+  .side-body > .pane { border-radius: 8px; }
   .side-body + .activity { margin-left: 0; margin-top: -1px; border: 1px solid var(--line); border-top: 0; border-radius: 0 0 8px 8px; }
 }

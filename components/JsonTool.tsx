@@ -5,7 +5,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { CSSProperties, ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 
 
-import { BS, HIST_KEY, HIST_MAX, HIST_MAX_CHARS, NL1, NL2, SAMPLE, TOAST_MAX, TOAST_MS, TOAST_OUT_MS } from "../lib/constants";
+import { BS, HIST_KEY, HIST_MAX, HIST_MAX_CHARS, NL1, SAMPLE, TOAST_MAX, TOAST_MS, TOAST_OUT_MS } from "../lib/constants";
 import type { HistoryEntry, ToastKind } from "../lib/constants";
 import { collectPaths, computeStats, deepSort, findMatches, foldRanges, isObject, joinIndex, joinKey, valueClass } from "../lib/json";
 import type { FoldRange, JsonValue, Match } from "../lib/json";
@@ -262,11 +262,6 @@ export default function JsonTool() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set(["$"]));
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
-  const [aiEndpoint, setAiEndpoint] = useState("http://120.77.200.18:8787");
-  const [aiKey, setAiKey] = useState("");
-  const [aiOutput, setAiOutput] = useState("");
-  const [aiError, setAiError] = useState("");
-  const [aiBusy, setAiBusy] = useState(false);
   const [toasts, setToasts] = useState<{ id: number; text: string; kind: ToastKind; leaving: boolean }[]>([]);
   // 标识符一律叫 history / hist*，界面上一律叫「保存记录」——对不上是故意的：
   // 它原来叫「历史记录」，改名只改了用户可见的部分。而 localStorage 的键
@@ -274,7 +269,7 @@ export default function JsonTool() {
   // 所以常量名跟着键走，不去制造「常量叫 SAVED_KEY、值却是 jsontool.history」那种别扭。
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [now, setNow] = useState(() => Date.now());
-  const [rightPanel, setRightPanel] = useState<"none" | "tree" | "ai" | "settings" | "history" | "help">("tree");
+  const [rightPanel, setRightPanel] = useState<"none" | "tree" | "settings" | "history" | "help">("tree");
   // 右侧面板宽度（百分比）。默认来自 SETTINGS_DEFAULTS = 左右 2:1。
   const [sideWidth, setSideWidth] = useState(prefs.sideWidth);
   const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -323,25 +318,6 @@ export default function JsonTool() {
     const t = window.setTimeout(() => savePrefs(prefsNow), PREFS_WRITE_MS);
     return () => window.clearTimeout(t);
   }, [prefsNow]);
-
-  useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem("jsontool.ai");
-      if (saved) {
-        const cfg = JSON.parse(saved) as { endpoint?: string; key?: string };
-        if (cfg.endpoint) setAiEndpoint(cfg.endpoint);
-        if (cfg.key) setAiKey(cfg.key);
-      }
-    } catch {
-    }
-  }, []);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem("jsontool.ai", JSON.stringify({ endpoint: aiEndpoint, key: aiKey }));
-    } catch {
-    }
-  }, [aiEndpoint, aiKey]);
 
   useEffect(() => {
     try {
@@ -769,7 +745,7 @@ export default function JsonTool() {
       : reformatJson(raw, indent, false));
     notify("已压缩");
   };
-  const doClear = () => { replaceAll(""); setQuery(""); setAiOutput(""); setAiError(""); notify("已清空", "warning"); };
+  const doClear = () => { replaceAll(""); setQuery(""); notify("已清空", "warning"); };
   // 示例 / Unicode / 转义 / 全展开全折叠 / 切面板都不加提示：
   // 它们的结果就在眼前（输入框或树立刻变了），再加一条气泡只是噪音。
   const doSample = () => {
@@ -816,63 +792,8 @@ export default function JsonTool() {
     if (file) file.text().then((text) => { replaceAll(text); notify("已载入 " + file.name, "info"); }).catch(() => {});
     e.target.value = "";
   };
-
-
-  const organize = async () => {
-    if (!ready || aiBusy || tooBig) return;
-    setAiBusy(true);
-    setAiOutput("");
-    setAiError("");
-    try {
-      const res = await fetch("/api/organize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ endpoint: aiEndpoint, key: aiKey, json: JSON.stringify(parsed.value, null, 2) }),
-      });
-      if (!res.ok || !res.body) {
-        const msg = await res.text();
-        throw new Error(msg || "AI 服务错误");
-      }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      let acc = "";
-      for (;;) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        buf += decoder.decode(chunk.value, { stream: true });
-        let sep = buf.indexOf(NL2);
-        while (sep !== -1) {
-          const frame = buf.slice(0, sep);
-          buf = buf.slice(sep + 2);
-          for (const line of frame.split(NL1)) {
-            if (!line.startsWith("data:")) continue;
-            const data = line.slice(5).trim();
-            if (!data) continue;
-            const obj = JSON.parse(data) as { t: string; v?: string };
-            if (obj.t === "delta" && obj.v) {
-              acc += obj.v;
-              setAiOutput(acc);
-            } else if (obj.t === "done" && obj.v) {
-              acc = obj.v;
-              setAiOutput(obj.v);
-            } else if (obj.t === "error" && obj.v) {
-              setAiError(obj.v);
-            }
-          }
-          sep = buf.indexOf(NL2);
-        }
-      }
-    } catch (err) {
-      setAiError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setAiBusy(false);
-    }
-  };
-
   // 恢复默认设置。只碰 SETTINGS_DEFAULTS 里那几项显示偏好（含分栏比例），
-  // **不动 AI 服务地址和访问密钥**——那是用户填的凭据，不是偏好，清掉就得重新去找。
-  // 也**不动右侧当前开着的面板**：那是「我此刻在干什么」，不是偏好。
+  // **不动右侧当前开着的面板**：那是「我此刻在干什么」，不是偏好。
   // 存下来的那份不用单独清：上面那个 effect 会把默认值照常写回去，效果一样。
   // 一律给提示：几项本来就在默认值时屏幕上什么都不会变，不提示就像按钮坏了
   // （和 格式化 是同一条规矩）。
@@ -1017,7 +938,7 @@ export default function JsonTool() {
           </div>
 
           {parsed.error && <div className="err">{parsed.error}</div>}
-          {tooBig && <div className="err">超过 5MB：仅支持格式化与压缩，树形视图与 AI 已禁用</div>}
+          {tooBig && <div className="err">超过 5MB：仅支持格式化与压缩，树形视图已禁用</div>}
         </div>
         {rightPanel !== "none" && (
           <>
@@ -1044,18 +965,6 @@ export default function JsonTool() {
                   {!ready && !parsed.empty && <div className="pad muted">修复 JSON 后显示结构</div>}
                   {parsed.empty && <div className="pad"><Hint where="tree" /></div>}
                 </div>
-              </div>
-            ) : rightPanel === "ai" ? (
-              <div className="ai">
-                <div className="pane-head">
-                  <span>AI 整理</span>
-                  <button className="tool-btn ai-run" onClick={organize}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" /><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" /></svg>
-                    {aiBusy ? "分析中" : "开始分析"}
-                  </button>
-                </div>
-                {aiError && <div className="err inline pad">{aiError}</div>}
-                <pre className="ai-output">{aiOutput || "尚未分析"}</pre>
               </div>
             ) : rightPanel === "history" ? (
               <div className="pane">
@@ -1132,22 +1041,11 @@ export default function JsonTool() {
                       <span>在输入框左侧显示行号。关掉后折叠三角仍在，只是不再编号。</span>
                     </label>
                   </div>
-                  <div className="settings-sep" />
-                  <div className="setting">
-                    <span className="setting-title">AI 服务地址</span>
-                    <span className="setting-desc">点「开始分析」时请求的服务端地址。</span>
-                    <input className="input" aria-label="AI 服务地址" value={aiEndpoint} onChange={(e) => setAiEndpoint(e.target.value)} />
-                  </div>
-                  <div className="setting">
-                    <span className="setting-title">访问密钥</span>
-                    <span className="setting-desc">存在本机 localStorage，每次请求经服务端转发，服务端不保存。</span>
-                    <input className="input" aria-label="访问密钥" type="password" value={aiKey} onChange={(e) => setAiKey(e.target.value)} />
-                  </div>
                 </div>
               </div>
             ) : (
               /* 帮助面板 = 整篇教程。文案全部来自 lib/help.ts 的 HELP_SECTIONS，
-                 这里只负责排版；另外三个空态是从**同一份**里挑几节显示的。
+                 这里只负责排版；三个空态各一句话，也在那个文件里。
                  想改帮助里说的话，去改那个文件，别在这里加字符串。 */
               <div className="pane">
                 <div className="pane-head">
@@ -1171,7 +1069,6 @@ export default function JsonTool() {
         <div className="activity">
           <button className={"act" + (rightPanel === "tree" ? " on" : "")} data-tip="树形视图" aria-label="树形视图" onClick={() => setRightPanel((v) => (v === "tree" ? "none" : "tree"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 6h-8" /><path d="M21 12h-8" /><path d="M21 18h-8" /><path d="M3 6v4c0 1.1.9 2 2 2h3" /><path d="M3 10v6c0 1.1.9 2 2 2h3" /></svg></button>
           <button className={"act" + (rightPanel === "history" ? " on" : "")} data-tip="保存记录" aria-label="保存记录" onClick={() => setRightPanel((v) => (v === "history" ? "none" : "history"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" /></svg></button>
-          <button className={"act" + (rightPanel === "ai" ? " on" : "")} data-tip="AI 整理" aria-label="AI 整理" onClick={() => setRightPanel((v) => (v === "ai" ? "none" : "ai"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg></button>
           <button className={"act" + (rightPanel === "help" ? " on" : "")} data-tip="帮助" aria-label="帮助" onClick={() => setRightPanel((v) => (v === "help" ? "none" : "help"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M9.3 9.4a2.8 2.8 0 1 1 3.5 2.7c-.5.18-.8.62-.8 1.15v.55" /><path d="M12 17.3h.01" /></svg></button>
           <button className={"act" + (rightPanel === "settings" ? " on" : "")} data-tip="设置" aria-label="设置" onClick={() => setRightPanel((v) => (v === "settings" ? "none" : "settings"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
         </div>

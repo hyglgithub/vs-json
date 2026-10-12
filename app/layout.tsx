@@ -4,7 +4,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'JSON 工具',
-  description: '可折叠 JSON 查看器与 AI 整理',
+  description: '可折叠的 JSON 查看器与格式化工具',
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

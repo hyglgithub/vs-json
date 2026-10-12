@@ -2,7 +2,6 @@
 // 改 TOAST_* 前先看 components/JsonTool.tsx 的 notify，改 HIST_* 前先看 pushHistory。
 export const NL1 = String.fromCharCode(10);
 export const BS = String.fromCharCode(92);
-export const NL2 = NL1 + NL1;
 
 export const TOAST_MS = 3000; // 消息提示自动消失（对齐 ElMessage 的 duration 默认值）
 export const TOAST_OUT_MS = 200; // 退场动画时长，**必须与 CSS 里 toast-out 的 duration 一致**
