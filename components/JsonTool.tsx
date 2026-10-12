@@ -277,7 +277,10 @@ export default function JsonTool() {
   // 行号槽宽。数字列按最大行号的位数算（两位起步，不然只有 9 行时槽口会贴住正文）；
   // 折叠列固定 14px，**有没有折叠点的行都留着**，三角才不会左右跳。
   // 用 ch 不用 px：字号可调，ch 会跟着 --editor-font 一起缩放。
-  const numCh = gutterOn ? Math.max(2, String(lines.length).length) : 0;
+  // 列宽 = 最大行号的**实际位数**，不再 Math.max(2, …) 兜底两位。
+  // 那个下限是早先留白很宽（20px）时加的，现在常数收到 4px，它只会白白多留一个字符宽——
+  // 7 行的文档所有号码都是 1 位数，却按 2 位留槽，实测左边距从 6px 变成 14.2px。
+  const numCh = gutterOn ? String(lines.length).length : 0;
   // 折叠列**不看 showLineNums**：关掉行号只是不显示号码，三角要留着，否则就没法折叠了。
   // 两层共用 .editor-nums 这一层 DOM，所以行数上限对两者一起生效（代价都在那层的节点数上）。
   const foldCol = ranges.size > 0 && lines.length <= LINE_NUM_MAX;
@@ -287,14 +290,23 @@ export default function JsonTool() {
     "--num-ch": String(numCh),
     "--fold-w": foldCol ? "14px" : "0px",
     // 槽整个关掉时必须显式给 0，否则 CSS 里那条 calc 会留下死宽度。
-    // 末尾那个常数 = 行号左边缘到编辑器左边（实测 = 常数 - 2）。14 → 12px，原来 16 → 20px，
-    // 行号左边留的空白比数字本身还宽，看着很空。
-    "--gutter": gutterShown ? "calc(var(--num-ch) * 1ch + var(--fold-w) + 14px)" : "0px",
+    // 末尾那个常数：行号左边缘到编辑器左边 = 常数 + 2（因为下面 .num 的 right 偏移是 fold-w + 8）。
+    // 一路收紧过来：20px（太宽，比数字本体还宽）→ 12px → 现在 6px。
+    "--gutter": gutterShown ? "calc(var(--num-ch) * 1ch + var(--fold-w) + 4px)" : "0px",
   } as CSSProperties;
 
   // 折叠位置是**按行号**记的，正文一变行号就可能整体错位，所以直接全丢。
   // 返回同一个引用时 React 会跳过这次更新，所以每敲一个字并不会多渲染一次。
   useEffect(() => { setFolded((f) => (f.size ? new Set<number>() : f)); }, [raw]);
+
+  // 整篇替换正文的统一入口：清折叠 + 换正文，放在**同一个批次**里。
+  // 不能只靠上面那个 [raw] effect：
+  //   1) 内容本来就是目标形态时（对着已格式化的文本再点格式化、已压缩的再点压缩），
+  //      setRaw 收到的是同一个字符串，React 跳过更新，effect 根本不跑，折叠会原地留着；
+  //   2) effect 在渲染之后才跑，会先拿「旧的 folded + 新的 ranges」渲染一帧，
+  //      屏幕上闪一次错误的折叠。和 setRaw 同批更新就没有这一帧。
+  // 格式化 / 压缩 / Unicode / 转义 / 示例 / 清空 / 上传 / 拖入 / 历史恢复 全走这里。
+  const replaceAll = (t: string) => { setFolded(new Set<number>()); setRaw(t); };
 
   const toggleFold = (line: number) => {
     // 折叠期间 textarea 是 visibility:hidden，先把焦点交出去——
@@ -527,7 +539,7 @@ export default function JsonTool() {
 
   // 点条目 = 把存下来的 JSON 灌回输入框（历史本身只读，不提供编辑）。
   const restoreHistory = useCallback((h: HistoryEntry) => {
-    setRaw(h.text);
+    replaceAll(h.text);
     notify("已恢复", "success");
   }, [notify]);
   const removeHistory = useCallback((id: number) => { setHistory((prev) => prev.filter((h) => h.id !== id)); }, []);
@@ -597,7 +609,7 @@ export default function JsonTool() {
   const doFormat = () => {
     if (!raw.trim()) return;
     if (sortMode !== "off" && !ready) return;
-    setRaw(sortMode !== "off"
+    replaceAll(sortMode !== "off"
       ? JSON.stringify(deepSort(parsed.value, sortMode === "desc"), null, indent)
       : reformatJson(raw, indent, true));
     notify("已格式化");
@@ -605,15 +617,15 @@ export default function JsonTool() {
   const doMinify = () => {
     if (!raw.trim()) return;
     if (sortMode !== "off" && !ready) return;
-    setRaw(sortMode !== "off"
+    replaceAll(sortMode !== "off"
       ? JSON.stringify(deepSort(parsed.value, sortMode === "desc"))
       : reformatJson(raw, indent, false));
     notify("已压缩");
   };
-  const doClear = () => { setRaw(""); setQuery(""); setAiOutput(""); setAiError(""); notify("已清空", "warning"); };
+  const doClear = () => { replaceAll(""); setQuery(""); setAiOutput(""); setAiError(""); notify("已清空", "warning"); };
   // 示例 / Unicode / 转义 / 全展开全折叠 / 切面板都不加提示：
   // 它们的结果就在眼前（输入框或树立刻变了），再加一条气泡只是噪音。
-  const doSample = () => { setRaw(SAMPLE); };
+  const doSample = () => { replaceAll(SAMPLE); };
   // 保存 = 把当前内容记进历史。这是历史唯一的入口，没有自动记录。
   const doSave = () => {
     if (!raw.trim()) return;
@@ -639,12 +651,12 @@ export default function JsonTool() {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
     if (!file) return;
-    file.text().then((text) => { setRaw(text); notify("已载入 " + file.name, "info"); }).catch(() => {});
+    file.text().then((text) => { replaceAll(text); notify("已载入 " + file.name, "info"); }).catch(() => {});
   };
 
   const onPickFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files && e.target.files[0];
-    if (file) file.text().then((text) => { setRaw(text); notify("已载入 " + file.name, "info"); }).catch(() => {});
+    if (file) file.text().then((text) => { replaceAll(text); notify("已载入 " + file.name, "info"); }).catch(() => {});
     e.target.value = "";
   };
 
@@ -759,8 +771,8 @@ export default function JsonTool() {
                 <button className="tool-btn" onClick={() => toggleMenu("unicode")}>Unicode<span className="caret" /></button>
                 {openMenu === "unicode" && (
                   <div className="menu">
-                    <button className="menu-item" onClick={() => { setRaw(escapeUnicode(raw)); setOpenMenu(null); setMenuLocked(false); }}>中文转 Unicode</button>
-                    <button className="menu-item" onClick={() => { setRaw(unescapeUnicode(raw)); setOpenMenu(null); setMenuLocked(false); }}>Unicode 转中文</button>
+                    <button className="menu-item" onClick={() => { replaceAll(escapeUnicode(raw)); setOpenMenu(null); setMenuLocked(false); }}>中文转 Unicode</button>
+                    <button className="menu-item" onClick={() => { replaceAll(unescapeUnicode(raw)); setOpenMenu(null); setMenuLocked(false); }}>Unicode 转中文</button>
                   </div>
                 )}
               </div>
@@ -768,8 +780,8 @@ export default function JsonTool() {
                 <button className="tool-btn" onClick={() => toggleMenu("escape")}>转义<span className="caret" /></button>
                 {openMenu === "escape" && (
                   <div className="menu">
-                    <button className="menu-item" onClick={() => { setRaw(escapeText(raw)); setOpenMenu(null); setMenuLocked(false); }}>添加 {BS} 转义</button>
-                    <button className="menu-item" onClick={() => { setRaw(unescapeText(raw)); setOpenMenu(null); setMenuLocked(false); }}>去除 {BS} 转义</button>
+                    <button className="menu-item" onClick={() => { replaceAll(escapeText(raw)); setOpenMenu(null); setMenuLocked(false); }}>添加 {BS} 转义</button>
+                    <button className="menu-item" onClick={() => { replaceAll(unescapeText(raw)); setOpenMenu(null); setMenuLocked(false); }}>去除 {BS} 转义</button>
                   </div>
                 )}
               </div>
