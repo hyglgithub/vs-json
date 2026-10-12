@@ -263,6 +263,10 @@ export default function JsonTool() {
   const [aiError, setAiError] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [toasts, setToasts] = useState<{ id: number; text: string; kind: ToastKind; leaving: boolean }[]>([]);
+  // 标识符一律叫 history / hist*，界面上一律叫「保存记录」——对不上是故意的：
+  // 它原来叫「历史记录」，改名只改了用户可见的部分。而 localStorage 的键
+  // jsontool.history **不能跟着改**，改了等于把已存下的条目全部丢弃，
+  // 所以常量名跟着键走，不去制造「常量叫 SAVED_KEY、值却是 jsontool.history」那种别扭。
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const [rightPanel, setRightPanel] = useState<"none" | "tree" | "ai" | "settings" | "history" | "help">("tree");
@@ -421,7 +425,7 @@ export default function JsonTool() {
   //      setRaw 收到的是同一个字符串，React 跳过更新，effect 根本不跑，折叠会原地留着；
   //   2) effect 在渲染之后才跑，会先拿「旧的 folded + 新的 ranges」渲染一帧，
   //      屏幕上闪一次错误的折叠。和 setRaw 同批更新就没有这一帧。
-  // 格式化 / 压缩 / Unicode / 转义 / 示例 / 清空 / 上传 / 拖入 / 历史恢复 全走这里。
+  // 格式化 / 压缩 / Unicode / 转义 / 示例 / 清空 / 上传 / 拖入 / 记录恢复 全走这里。
   const replaceAll = (t: string) => { setFolded(new Set<number>()); setRaw(t); };
 
   // 搜索相关的一律展开。折叠期间命中标记是**不画**的（偏移按 raw 算，折叠后行号已重排），
@@ -631,10 +635,10 @@ export default function JsonTool() {
     outTimersRef.current.clear();
   }, []);
 
-  // 记一条历史。**只有点「保存」才会走到这里**——不做任何自动记录。
+  // 记一条保存记录。**只有点「保存」才会走到这里**——不做任何自动记录。
   // 用户点保存就一定留下一条：**不去重**（内容相同也照样新增），否则「点了保存却没反应」。
   // 裁剪只作用于更旧的条目，最新这条永远保留；localStorage 配额只有几 MB，
-  // 不裁的话 setItem 会抛 QuotaExceededError，被下面的 catch 吞掉，看起来就是「历史莫名其妙不存了」。
+  // 不裁的话 setItem 会抛 QuotaExceededError，被下面的 catch 吞掉，看起来就是「记录莫名其妙不存了」。
   const pushHistory = useCallback((text: string) => {
     if (!text.trim()) return;
     setHistory((prev) => {
@@ -651,7 +655,7 @@ export default function JsonTool() {
     });
   }, []);
 
-  // 「刚刚」要能自己走成「1 分钟前」。只在历史面板开着时每 30s 走一格——
+  // 「刚刚」要能自己走成「1 分钟前」。只在保存记录面板开着时每 30s 走一格——
   // 关掉就不跳，省得为了一个看不见的标签一直重渲染整个组件。
   useEffect(() => {
     if (rightPanel !== "history") return;
@@ -660,10 +664,10 @@ export default function JsonTool() {
     return () => window.clearInterval(t);
   }, [rightPanel]);
 
-  // 点条目 = 把存下来的 JSON 灌回输入框（历史本身只读，不提供编辑）。
+  // 点条目 = 把存下来的 JSON 灌回输入框（保存记录本身只读，不提供编辑）。
   const restoreHistory = useCallback((h: HistoryEntry) => {
     replaceAll(h.text);
-    notify("已恢复", "success");
+    notify("已载入", "success");
   }, [notify]);
   const removeHistory = useCallback((id: number) => { setHistory((prev) => prev.filter((h) => h.id !== id)); }, []);
   const clearHistory = useCallback(() => { setHistory([]); }, []);
@@ -750,11 +754,11 @@ export default function JsonTool() {
   // 示例 / Unicode / 转义 / 全展开全折叠 / 切面板都不加提示：
   // 它们的结果就在眼前（输入框或树立刻变了），再加一条气泡只是噪音。
   const doSample = () => { replaceAll(SAMPLE); };
-  // 保存 = 把当前内容记进历史。这是历史唯一的入口，没有自动记录。
+  // 保存 = 把当前内容记进保存记录。这是它唯一的入口，没有自动记录。
   const doSave = () => {
     if (!raw.trim()) return;
     pushHistory(raw);
-    notify("已保存到历史", "success");
+    notify("已保存到记录", "success");
   };
   const doCopy = () => { copy(raw, "已复制"); };
   // 文件名带秒级时间戳。以前固定叫 data.json，连下两次浏览器只会给
@@ -923,12 +927,12 @@ export default function JsonTool() {
               </div>
             </div>
             <div className="tool-icons">
-              <button className="icon-btn" onClick={doSave} data-tip="保存到历史" aria-label="保存到历史"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg></button>
+              <button className="icon-btn" onClick={doSave} data-tip="保存到记录" aria-label="保存到记录"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg></button>
               <button className="icon-btn" onClick={() => fileRef.current?.click()} data-tip="上传" aria-label="上传"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg></button>
               <input ref={fileRef} type="file" accept=".json,application/json" style={{ display: "none" }} onChange={onPickFile} />
               <button className="icon-btn" onClick={doDownload} data-tip="下载" aria-label="下载"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg></button>
               <button className="icon-btn" onClick={doCopy} data-tip="复制" aria-label="复制"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
-              {/* 扫把，不是垃圾桶。清空是「把这儿扫干净」，和历史记录里那条
+              {/* 扫把，不是垃圾桶。清空是「把这儿扫干净」，和保存记录里那条
                   「删除」不是一回事；两者以前共用垃圾桶图标，容易看错。 */}
               <button className="icon-btn" onClick={doClear} data-tip="清空" aria-label="清空"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="10.7" y="3" width="2.6" height="7" rx="0.4"/><rect x="5.5" y="10" width="13" height="4" rx="1"/><path d="M7.5 14h9l2.5 7h-14z"/><path d="M10 15v6"/><path d="M14 15v6"/></svg></button>
             </div>
@@ -1014,13 +1018,13 @@ export default function JsonTool() {
             ) : rightPanel === "history" ? (
               <div className="pane">
                 <div className="pane-head">
-                  <span>历史记录（{history.length}条）</span>
-                  <button className="tool-btn hist-clear" onClick={clearHistory}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /></svg>清空历史</button>
+                  <span>保存记录（{history.length}条）</span>
+                  <button className="tool-btn hist-clear" onClick={clearHistory}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /></svg>清空记录</button>
                 </div>
                 <div className="tree">
                   {history.length === 0 && (
                     <div className="pad muted hist-empty">
-                      <span>还没有历史记录 · 在上方点「保存到历史」把当前内容记到这里</span>
+                      <span>还没有保存记录 · 在上方点「保存」把当前内容存下来</span>
                       <span className="small">最多保留 {HIST_MAX} 条、总计 {fmtBytes(HIST_MAX_CHARS)}，超出时最旧的会被丢弃</span>
                     </div>
                   )}
@@ -1111,7 +1115,7 @@ export default function JsonTool() {
         )}
         <div className="activity">
           <button className={"act" + (rightPanel === "tree" ? " on" : "")} data-tip="树形视图" aria-label="树形视图" onClick={() => setRightPanel((v) => (v === "tree" ? "none" : "tree"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 6h-8" /><path d="M21 12h-8" /><path d="M21 18h-8" /><path d="M3 6v4c0 1.1.9 2 2 2h3" /><path d="M3 10v6c0 1.1.9 2 2 2h3" /></svg></button>
-          <button className={"act" + (rightPanel === "history" ? " on" : "")} data-tip="历史记录" aria-label="历史记录" onClick={() => setRightPanel((v) => (v === "history" ? "none" : "history"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" /></svg></button>
+          <button className={"act" + (rightPanel === "history" ? " on" : "")} data-tip="保存记录" aria-label="保存记录" onClick={() => setRightPanel((v) => (v === "history" ? "none" : "history"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" /></svg></button>
           <button className={"act" + (rightPanel === "ai" ? " on" : "")} data-tip="AI 整理" aria-label="AI 整理" onClick={() => setRightPanel((v) => (v === "ai" ? "none" : "ai"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg></button>
           <button className={"act" + (rightPanel === "help" ? " on" : "")} data-tip="帮助" aria-label="帮助" onClick={() => setRightPanel((v) => (v === "help" ? "none" : "help"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M9.3 9.4a2.8 2.8 0 1 1 3.5 2.7c-.5.18-.8.62-.8 1.15v.55" /><path d="M12 17.3h.01" /></svg></button>
           <button className={"act" + (rightPanel === "settings" ? " on" : "")} data-tip="设置" aria-label="设置" onClick={() => setRightPanel((v) => (v === "settings" ? "none" : "settings"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
