@@ -1,12 +1,35 @@
 {
-  "name": "jsontool",
+  "name": "vs-json",
   "version": "0.1.0",
   "private": true,
+  "description": "VS Json —— 纯前端的 JSON 查看 / 格式化工具，左边贴 JSON，右边看结构。不联网、无后端。",
+  "license": "MIT",
+  "author": "hyglgithub",
+  "homepage": "https://github.com/hyglgithub/vs-json#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hyglgithub/vs-json.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hyglgithub/vs-json/issues"
+  },
+  "keywords": [
+    "json",
+    "json-viewer",
+    "json-formatter",
+    "nextjs",
+    "react",
+    "typescript"
+  ],
+  "engines": {
+    "node": ">=18.18.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "e2e": "node e2e.cjs"
   },
   "dependencies": {
     "next": "^15.5.27",
@@ -17,6 +40,7 @@
     "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "ws": "^8.18.0"
   }
 }

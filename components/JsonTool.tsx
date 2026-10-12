@@ -1,19 +1,25 @@
 "use client";
 import type { PointerEvent as ReactPointerEvent } from "react";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent, CSSProperties, DragEvent, ReactNode } from "react";
 
 
 import { BS, HIST_KEY, HIST_MAX, HIST_MAX_CHARS, NL1, SAMPLE, TOAST_MAX, TOAST_MS, TOAST_OUT_MS } from "../lib/constants";
 import type { HistoryEntry, ToastKind } from "../lib/constants";
-import { collectPaths, computeStats, deepSort, findMatches, foldRanges, isObject, joinIndex, joinKey, valueClass } from "../lib/json";
+import { collectPaths, computeStats, deepSort, findMatches, foldRanges, isObject, joinKey } from "../lib/json";
 import type { FoldRange, JsonValue, Match } from "../lib/json";
 import { escapeText, escapeUnicode, reformatJson, unescapeText, unescapeUnicode } from "../lib/text";
-import { fmtBytes, fmtFileStamp, fmtRel, fmtTime, histPreview } from "../lib/format";
-import { EMPTY_HINTS, HELP_SECTIONS } from "../lib/help";
-import { clampSide, FONT_SIZES, INDENT_STEPS, loadPrefs, PREFS_WRITE_MS, savePrefs, SETTINGS_DEFAULTS } from "../lib/prefs";
-import type { Prefs } from "../lib/prefs";
+import { fmtFileStamp } from "../lib/format";
+import { clampSide, loadPrefs, PREFS_WRITE_MS, savePrefs, SETTINGS_DEFAULTS } from "../lib/prefs";
+import type { Prefs, SortMode } from "../lib/prefs";
+import Editor from "./Editor";
+import Toasts from "./Toasts";
+import type { Toast } from "./Toasts";
+import HelpPanel from "./panels/HelpPanel";
+import HistoryPanel from "./panels/HistoryPanel";
+import SettingsPanel from "./panels/SettingsPanel";
+import TreePanel from "./panels/TreePanel";
 
 // 行号层要不要渲染的阈值。行号是**按逻辑行**渲染的（见 .editor-nums 的注释），
 // 一个逻辑行一个 <div>，所以行数直接等于 DOM 节点数。超过这个数就不画行号了：
@@ -23,202 +29,9 @@ const LINE_NUM_MAX = 20000;
 // 设置的默认值、可选项清单、存取逻辑都在 lib/prefs.ts —— 那里是唯一碰
 // localStorage["jsontool.prefs"] 的地方。这里只负责把它们接进组件状态。
 
-function Highlight({ text, query, active }: { text: string; query: string; active?: boolean }) {
-  if (!query) return <>{text}</>;
-  const lower = text.toLowerCase();
-  const q = query.toLowerCase();
-  const out: ReactNode[] = [];
-  let i = 0;
-  let idx = lower.indexOf(q, 0);
-  let n = 0;
-  while (idx !== -1) {
-    if (idx > i) out.push(text.slice(i, idx));
-    out.push(<mark className={"mark" + (active ? " active" : "")} key={n++}>{text.slice(idx, idx + q.length)}</mark>);
-    i = idx + q.length;
-    idx = lower.indexOf(q, i);
-  }
-  out.push(text.slice(i));
-  return <>{out}</>;
-}
-
-type NodeProps = {
-  label: string;
-  value: JsonValue;
-  path: string;
-  depth: number;
-  expanded: Set<string>;
-  onToggle: (path: string) => void;
-  query: string;
-  activePath: string;
-  registerRef: (path: string, el: HTMLDivElement | null) => void;
-  onCopyPath: (path: string) => void;
-  onCopyValue: (value: JsonValue) => void;
-};
-
-function JsonNode(props: NodeProps) {
-  const { label, value, path, depth, expanded, onToggle, query, activePath, registerRef, onCopyPath, onCopyValue } = props;
-  // 提示由 onCopyPath / onCopyValue 自己发——它们才知道剪贴板到底写成功没有，
-  // 这里报「已复制」会变成瞎猜（以前就是瞎猜）。
-  const isArr = Array.isArray(value);
-  const isObj = isObject(value);
-  const isContainer = isArr || isObj;
-  const open = isContainer && expanded.has(path);
-  const active = activePath === path;
-  const entries: Array<[string, JsonValue]> = isArr
-    ? (value as JsonValue[]).map((item, i) => [String(i), item] as [string, JsonValue])
-    : isObj
-      ? Object.keys(value as { [key: string]: JsonValue }).map((k) => [k, (value as { [key: string]: JsonValue })[k]] as [string, JsonValue])
-      : [];
-  return (
-    <div>
-      <div className={"row" + (active ? " active" : "")} ref={(el) => { registerRef(path, el); }}>
-        {isContainer ? <button className="twist" onClick={() => onToggle(path)}>{open ? "-" : "+"}</button> : <span className="twist" />}
-        <span className="idx copyable" onDoubleClick={() => onCopyPath(path)}><Highlight text={label} query={query} /></span>
-        <span className="colon">:</span>
-        {isContainer ? (
-          <>
-            <span className="badge">{isArr ? "[" + entries.length + "]" : "{" + entries.length + "}"}</span>
-            {!open && <span className="muted small"> ...</span>}
-          </>
-        ) : (
-          <span className={"val copyable " + valueClass(value)} onDoubleClick={() => onCopyValue(value)}><Highlight text={value === null ? "null" : JSON.stringify(value)} query={query} /></span>
-        )}
-      </div>
-      {open && (
-        <div className="children">
-          {entries.map(([k, item]) => (
-            <JsonNode key={k} label={isArr ? "[" + k + "]" : k} value={item} path={isArr ? joinIndex(path, Number(k)) : joinKey(path, k)} depth={depth + 1} expanded={expanded} onToggle={onToggle} query={query} activePath={activePath} registerRef={registerRef} onCopyPath={onCopyPath} onCopyValue={onCopyValue} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-
-// 每种消息类型一个图标。primary 和 info 同用 ⓘ（Element 也是这样，只有颜色不同）。
-function toastIcon(kind: ToastKind): ReactNode {
-  if (kind === "success") {
-    return <svg className="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M8 12.4l2.6 2.6L16 9.6" /></svg>;
-  }
-  if (kind === "warning") {
-    return <svg className="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 4l9 16H3z" /><path d="M12 10v4.5" /><path d="M12 17.6h.01" /></svg>;
-  }
-  if (kind === "error") {
-    return <svg className="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M15 9l-6 6" /><path d="M9 9l6 6" /></svg>;
-  }
-  return <svg className="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 11v5.5" /><path d="M12 7.6h.01" /></svg>;
-}
-
-// 空态里的一句话提醒。文案在 lib/help.ts 的 EMPTY_HINTS 里，这儿只负责排版。
-// **就一段灰字，没有标题、没有列表、没有「更多见帮助」**——空白面板上摆标题和条目
-// 就是「分层」，用户看过之后要求去掉。手册在帮助面板，这里只管指路。
-function Hint({ where }: { where: keyof typeof EMPTY_HINTS }) {
-  return <p className="hint">{EMPTY_HINTS[where]}</p>;
-}
-
-type SelOption = { value: string; label: string };
-
-// 设置面板用的下拉。**故意不用原生 <select>**：它的弹层由系统绘制，选中项是系统蓝实心高亮、
-// 四角方硬，CSS 一点都碰不到。这里换成「按钮 + .menu」，于是设置里的下拉和工具栏的
-// Unicode / 转义 菜单共用同一套 hover / 按下 / 圆角 / 阴影。
-// 焦点始终留在触发按钮上，弹层里的项只有 role="option"（不参与 Tab 序列），
-// 键盘操作在按钮的 onKeyDown 里统一处理——这是 ARIA combobox 的标准做法。
-function Select({ label, value, options, onChange }: { label: string; value: string; options: SelOption[]; onChange: (v: string) => void }) {
-  const [open, setOpen] = useState(false);
-  // 高亮项。鼠标划入和键盘上下都改它，两者共用同一个高亮，不会各亮各的。
-  const [hi, setHi] = useState(0);
-  // 弹层的**视口**坐标。弹层走 position:fixed，理由见下面那条 useLayoutEffect。
-  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
-  const wrapRef = useRef<HTMLDivElement | null>(null);
-  const btnRef = useRef<HTMLButtonElement | null>(null);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-  const cur = options.findIndex((o) => o.value === value);
-  const current = options[cur === -1 ? 0 : cur];
-
-  const openMenu = () => {
-    const b = btnRef.current;
-    if (!b) return;
-    const r = b.getBoundingClientRect();
-    setPos({ top: r.bottom + 6, left: r.left, width: r.width });
-    setHi(cur === -1 ? 0 : cur);
-    setOpen(true);
-  };
-
-  // 下方放不下就翻到按钮上方。
-  // 必须用 useLayoutEffect 而不是 useEffect：它在浏览器**绘制之前**跑完，
-  // 所以「先画在下面、再翻到上面」这一下不会在屏幕上闪出来。
-  useLayoutEffect(() => {
-    const m = menuRef.current;
-    const b = btnRef.current;
-    if (!open || !m || !b) return;
-    const h = m.offsetHeight;
-    const r = b.getBoundingClientRect();
-    const below = window.innerHeight - r.bottom - 6;
-    const above = r.top - 6;
-    if (below < h && above > below) setPos((p) => ({ ...p, top: r.top - h - 6 }));
-  }, [open]);
-
-  // 点外面关掉；面板一滚也关掉。
-  // 滚动那条是因为弹层是 position:fixed：它不跟着 .settings 的滚动走，
-  // 不关的话会脱离按钮浮在原地。scroll 不冒泡，所以要 capture。
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (!t || !wrapRef.current || !wrapRef.current.contains(t)) setOpen(false);
-    };
-    const onMove = () => setOpen(false);
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("scroll", onMove, true);
-    window.addEventListener("resize", onMove);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("scroll", onMove, true);
-      window.removeEventListener("resize", onMove);
-    };
-  }, [open]);
-
-  const commit = (v: string) => { onChange(v); setOpen(false); };
-
-  const onKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>) => {
-    if (e.key === "Escape") { setOpen(false); return; }
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      if (open) commit(options[hi].value);
-      else { setHi(cur === -1 ? 0 : cur); setOpen(true); }
-      return;
-    }
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault();
-      const d = e.key === "ArrowDown" ? 1 : -1;
-      // 收起时方向键直接改值（对齐原生 select 的手感），展开时只移动高亮
-      if (open) setHi((i) => (i + d + options.length) % options.length);
-      else commit(options[(cur + d + options.length) % options.length].value);
-    }
-  };
-
-  return (
-    <div className="sel" ref={wrapRef}>
-      <button ref={btnRef} type="button" className="input sel-btn" aria-label={label} aria-haspopup="listbox" aria-expanded={open}
-        onClick={() => { if (open) setOpen(false); else openMenu(); }} onKeyDown={onKeyDown}>
-        <span className="sel-label">{current.label}</span>
-      </button>
-      {open && (
-        <div ref={menuRef} className="menu sel-menu" role="listbox" aria-label={label} style={{ top: pos.top, left: pos.left, width: pos.width }}>
-          {options.map((o, i) => (
-            <div key={o.value} role="option" aria-selected={o.value === value}
-              className={"menu-item" + (o.value === value ? " on" : "") + (i === hi ? " hi" : "")}
-              onMouseEnter={() => setHi(i)}
-              onClick={() => commit(o.value)}>
-              {o.label}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
+// 右侧面板的四个 id。它们同时是：注册表里的键、活动栏按钮的顺序、以及
+// `rightPanel` 的取值（外加 "none"，表示四个都收起）。
+type PanelId = "tree" | "history" | "help" | "settings";
 
 export default function JsonTool() {
   // 偏好快照，**只读一次**，给下面几个 useState 当初值。
@@ -235,7 +48,7 @@ export default function JsonTool() {
   const [showLineNums, setShowLineNums] = useState(prefs.showLineNums);
   // 已折叠的块，存的是**开括号所在的行号**（0 起）。折叠期间编辑器整体转只读展示，见 folding。
   const [folded, setFolded] = useState<Set<number>>(new Set());
-  const [sortMode, setSortMode] = useState<"off" | "asc" | "desc">(prefs.sortMode);
+  const [sortMode, setSortMode] = useState<SortMode>(prefs.sortMode);
   const [openMenu, setOpenMenu] = useState<"unicode" | "escape" | null>(null);
   const [menuLocked, setMenuLocked] = useState(false);
   const toggleMenu = (id: "unicode" | "escape") => {
@@ -262,14 +75,14 @@ export default function JsonTool() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set(["$"]));
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
-  const [toasts, setToasts] = useState<{ id: number; text: string; kind: ToastKind; leaving: boolean }[]>([]);
+  const [toasts, setToasts] = useState<Toast[]>([]);
   // 标识符一律叫 history / hist*，界面上一律叫「保存记录」——对不上是故意的：
   // 它原来叫「历史记录」，改名只改了用户可见的部分。而 localStorage 的键
   // jsontool.history **不能跟着改**，改了等于把已存下的条目全部丢弃，
   // 所以常量名跟着键走，不去制造「常量叫 SAVED_KEY、值却是 jsontool.history」那种别扭。
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [now, setNow] = useState(() => Date.now());
-  const [rightPanel, setRightPanel] = useState<"none" | "tree" | "settings" | "history" | "help">("tree");
+  const [rightPanel, setRightPanel] = useState<"none" | PanelId>("tree");
   // 右侧面板宽度（百分比）。默认来自 SETTINGS_DEFAULTS = 左右 2:1。
   const [sideWidth, setSideWidth] = useState(prefs.sideWidth);
   const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -810,12 +623,47 @@ export default function JsonTool() {
   const activeMatch = activeItem && activeItem.tree ? activeItem.tree : null;
   const queryLower = query.trim().toLowerCase();
 
+  // 右侧面板**一张注册表**：活动栏那排按钮和面板正文都从它来，两边不可能对不上。
+  // 顺序就是活动栏里从左到右的顺序（树形视图 / 保存记录 / 帮助 / 设置）。
+  // 加一个面板 = 在 components/panels/ 下写一个组件，然后往这个数组里加一项——
+  // 不用再去改一条三元表达式，也没有「帮助那个 else 分支」这种隐含顺序了。
+  const panels: { id: PanelId; tip: string; icon: ReactNode; content: ReactNode }[] = [
+    {
+      id: "tree",
+      tip: "树形视图",
+      icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 6h-8" /><path d="M21 12h-8" /><path d="M21 18h-8" /><path d="M3 6v4c0 1.1.9 2 2 2h3" /><path d="M3 10v6c0 1.1.9 2 2 2h3" /></svg>,
+      content: <TreePanel ready={ready} tooBig={tooBig} empty={parsed.empty} value={parsed.value} expanded={expanded}
+        onToggle={onToggle} query={queryLower} activePath={activeMatch ? activeMatch.path : ""} registerRef={registerRef}
+        onCopyPath={onCopyPath} onCopyValue={onCopyValue} onExpandAll={expandAll} onCollapseAll={collapseAll} />,
+    },
+    {
+      id: "history",
+      tip: "保存记录",
+      icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" /></svg>,
+      content: <HistoryPanel history={history} now={now} onRestore={restoreHistory} onRemove={removeHistory} onClear={clearHistory} />,
+    },
+    {
+      id: "help",
+      tip: "帮助",
+      icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M9.3 9.4a2.8 2.8 0 1 1 3.5 2.7c-.5.18-.8.62-.8 1.15v.55" /><path d="M12 17.3h.01" /></svg>,
+      content: <HelpPanel />,
+    },
+    {
+      id: "settings",
+      tip: "设置",
+      icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>,
+      content: <SettingsPanel indent={indent} sortMode={sortMode} fontSize={fontSize} showLineNums={showLineNums}
+        onIndent={setIndent} onSortMode={setSortMode} onFontSize={setFontSize} onShowLineNums={setShowLineNums} onReset={doResetSettings} />,
+    },
+  ];
+  const openPanel = panels.find((p) => p.id === rightPanel);
+
   return (
     <div className="app" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
       <div className="topbar">
         <div className="brand">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" role="img" aria-label="JSON 工具"><path d="M8 3H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1" /><path d="M16 3h1a2 2 0 0 1 2 2v4a2 2 0 0 0 2 2 2 2 0 0 0-2 2v4a2 2 0 0 1-2 2h-1" /></svg>
-          <span className="brand-name">Jsontool</span>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" role="img" aria-label="VS Json"><path d="M8 3H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1" /><path d="M16 3h1a2 2 0 0 1 2 2v4a2 2 0 0 0 2 2 2 2 0 0 0-2 2v4a2 2 0 0 1-2 2h-1" /></svg>
+          <span className="brand-name">VS Json</span>
           {/* 等待输入 / 节点·深度·字节。原来靠 margin-left:auto 顶在顶栏最右，
               现在挂在标题右边；顶栏右侧那块位置空出来另有用途。 */}
           <span className="muted small topbar-stats">{ready ? "节点 " + info.nodes + " · 深度 " + info.depth + " · " + raw.length + " 字节" : parsed.error ? "解析错误" : "等待输入"}</span>
@@ -892,50 +740,10 @@ export default function JsonTool() {
           </div>
           {/* .folded 只在真的有行被藏起来时挂上：它会把 textarea 整层隐藏、让 .editor-nums
               接管滚动。折叠期间编辑器是只读展示态——textarea 藏不了自己的部分文字。 */}
-          <div className={"editor-wrap" + (folding ? " folded" : "") + (gutterShown ? " guttered" : "")} style={editorStyle}>
-            <pre className="editor-back" ref={backRef} aria-hidden="true">{foldedText}</pre>
-            <textarea ref={editorRef} className="editor-front" value={raw} onChange={(e) => setRaw(e.target.value)} onScroll={(e) => { const st = e.currentTarget.scrollTop; const sl = e.currentTarget.scrollLeft; const bk = backRef.current; if (bk) { bk.scrollTop = st; bk.scrollLeft = sl; } const mk = marksRef.current; if (mk) { mk.scrollTop = st; mk.scrollLeft = sl; } const nm = numsRef.current; if (nm) nm.scrollTop = st; }} spellCheck={false} aria-label="JSON 输入" />
-            {/* 折叠期间不做搜索高亮：命中位置是按 raw 的偏移算的，折叠后行号已经重排，
-                硬套上去只会画错地方。留空层是为了保住 ref，搜索滚动那个 effect 还要用它。 */}
-            <pre className="editor-marks" ref={marksRef} aria-hidden="true">{folding ? "" : highlightRaw}</pre>
-            {/* 行号层：`{s.text}` 是**透明的**，只用来把每个逻辑行撑到和编辑器里一样高，
-                这样折行的续行不会让后面的号码往上跑。真正显示的只有绝对定位的 .num。
-                它是第 4 层，和前三层不共享滚动——平时由 textarea 的 onScroll 推，
-                折叠时（textarea 已不可交互）反过来由它自己推给另外两层。 */}
-            {gutterShown && (
-              <div className="editor-nums" ref={numsRef} aria-hidden="true"
-                onClick={() => { if (folding) setFolded(new Set()); }}
-                onScroll={(e) => {
-                  if (!folding) return;
-                  const st = e.currentTarget.scrollTop;
-                  const bk = backRef.current; if (bk) bk.scrollTop = st;
-                  const mk = marksRef.current; if (mk) mk.scrollTop = st;
-                }}>
-                {shown.map((s, k) => (
-                  <div className="num-line" key={s.i}>
-                    {gutterOn && <span className="num">{k + 1}</span>}
-                    {ranges.has(s.i) && (
-                      <button className={"num-fold" + (folding && folded.has(s.i) ? " on" : "")} tabIndex={-1} aria-label="折叠"
-                        onClick={(e) => { e.stopPropagation(); toggleFold(s.i); }}>
-                        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1.4 2.6L5 7.2l3.6-4.6z" fill="currentColor" /></svg>
-                      </button>
-                    )}
-                    {s.text}
-                  </div>
-                ))}
-              </div>
-            )}
-            {/* 输入框空态。**浮在四层之上的一条独立分支，不进那套盒子度量**——
-                文本为空时三层里一个字都没有，这里画什么都不会和它们错位。
-                它是 .editor-wrap 的最后一个子元素：z-index 和 .editor-marks 同为 1，
-                打平就按 DOM 顺序决胜，排最后正好压住那一层（那一层此时也是空的）。
-                必须低于 .editor-front 的 2 —— 那个是 z-index 决定的，和 DOM 顺序无关。 */}
-            {parsed.empty && (
-              <div className="editor-empty" aria-hidden="true">
-                <Hint where="editor" />
-              </div>
-            )}
-          </div>
+          <Editor raw={raw} onChange={setRaw} foldedText={foldedText} highlightRaw={highlightRaw} shown={shown}
+            ranges={ranges} folded={folded} folding={folding} gutterShown={gutterShown} gutterOn={gutterOn}
+            style={editorStyle} empty={parsed.empty} editorRef={editorRef} backRef={backRef} marksRef={marksRef}
+            numsRef={numsRef} onToggleFold={toggleFold} onUnfold={unfold} />
 
           {parsed.error && <div className="err">{parsed.error}</div>}
           {tooBig && <div className="err">超过 5MB：仅支持格式化与压缩，树形视图已禁用</div>}
@@ -944,150 +752,20 @@ export default function JsonTool() {
           <>
             <div className="splitter" onPointerDown={onSplitDown} onPointerMove={onSplitMove} onPointerUp={onSplitUp} onPointerCancel={onSplitUp} />
             <div className="side-body" style={{ width: sideWidth + "%" }}>
-            {rightPanel === "tree" ? (
-              <div className="pane">
-                <div className="pane-head">
-                  <span>树形视图</span>
-                  <div className="tree-actions">
-                    <button className="tool-btn" onClick={expandAll}>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="4" /><path d="M12 8v8" /><path d="M8 12h8" /></svg>
-                      全展开
-                    </button>
-                    <button className="tool-btn" onClick={collapseAll}>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="4" /><path d="M8 12h8" /></svg>
-                      全折叠
-                    </button>
-                  </div>
-                </div>
-                <div className="tree">
-                  {ready && !tooBig && <JsonNode label="$" value={parsed.value} path="$" depth={0} expanded={expanded} onToggle={onToggle} query={queryLower} activePath={activeMatch ? activeMatch.path : ""} registerRef={registerRef} onCopyPath={onCopyPath} onCopyValue={onCopyValue} />}
-                  {ready && tooBig && <div className="pad muted">数据超过 5MB，未渲染树</div>}
-                  {!ready && !parsed.empty && <div className="pad muted">修复 JSON 后显示结构</div>}
-                  {parsed.empty && <div className="pad"><Hint where="tree" /></div>}
-                </div>
-              </div>
-            ) : rightPanel === "history" ? (
-              <div className="pane">
-                <div className="pane-head">
-                  <span>保存记录（{history.length}条）</span>
-                  <button className="tool-btn hist-clear" onClick={clearHistory}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /></svg>清空记录</button>
-                </div>
-                <div className="tree">
-                  {/* 两个上限写在这节提示的最后一条里（数字由 HIST_MAX / HIST_MAX_CHARS 算出来）。
-                      以前这里另有一行小字重复说上限，数字还是手抄的，和常量一改就对不上——
-                      现在只此一处。 */}
-                  {history.length === 0 && <div className="pad"><Hint where="history" /></div>}
-                  {history.map((h) => (
-                    <div className="hist-row" key={h.id}>
-                      <button className="hist-main" onClick={() => restoreHistory(h)}>
-                        <span className="hist-line1">
-                          <span className="hist-rel">{fmtRel(h.ts, now)}</span>
-                          <span className="hist-meta">{fmtTime(h.ts)} · {fmtBytes(h.text.length)}</span>
-                        </span>
-                        <span className="hist-prev">{histPreview(h.text)}</span>
-                      </button>
-                      <button className="hist-del" onClick={() => removeHistory(h.id)} data-tip="删除" aria-label="删除">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /></svg>
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : rightPanel === "settings" ? (
-              <div className="pane">
-                <div className="pane-head">
-                  <span>设置</span>
-                  {/* 纯图标按钮才挂 data-tip，这个有文字，不加（见 CLAUDE.md 的提醒规矩） */}
-                  <button className="tool-btn set-reset" onClick={doResetSettings}>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1" /><path d="M3.5 4.5v5h5" /></svg>
-                    恢复默认
-                  </button>
-                </div>
-                {/* 每项一块：标题（主色粗体）→ 说明（灰色小字）→ 控件，三者左对齐。
-                    这是照 VS Code 设置页的结构来的。
-                    外层**不用 <label>**：<label> 会把内部任何一次点击转发给它关联的控件，
-                    而下拉弹层里的选项也在这一块里，点选项会连带把触发按钮再点一次、菜单立刻重新弹开。
-                    改用 aria-label 给控件命名。 */}
-                <div className="settings">
-                  <div className="setting">
-                    <span className="setting-title">缩进</span>
-                    {/* 只对**格式化**有效：压缩走的是 reformatJson(raw, indent, false)，
-                        pretty 为假时 unit 是空串、也不插换行，indent 根本不参与。
-                        原来这句写的是「格式化与压缩时」，是错的。 */}
-                    <span className="setting-desc">格式化时每一层嵌套缩进几个空格。压缩会去掉全部缩进和换行。</span>
-                    <Select label="缩进" value={String(indent)} onChange={(v) => setIndent(Number(v))}
-                      options={INDENT_STEPS.map((n) => ({ value: String(n), label: n + " 空格" }))} />
-                  </div>
-                  {/* Key 排序 放在字体大小上面：它和缩进都是**格式化·压缩这一组**的选项，
-                      两项挨着；字体大小和行号则是**编辑器显示**的偏好，自己成一组。
-                      （组名是「格式化·压缩」，但缩进只对格式化生效，Key 排序才是两者都生效——
-                      别把组名当成「两项都影响两者」，那句错话就是这么来的。） */}
-                  <div className="setting">
-                    <span className="setting-title">Key 排序</span>
-                    <span className="setting-desc">格式化与压缩时，按键名重新排列各层级的字段。</span>
-                    <Select label="Key 排序" value={sortMode} onChange={(v) => setSortMode(v as "off" | "asc" | "desc")}
-                      options={[{ value: "off", label: "关闭" }, { value: "asc", label: "升序" }, { value: "desc", label: "降序" }]} />
-                  </div>
-                  <div className="setting">
-                    <span className="setting-title">字体大小</span>
-                    <span className="setting-desc">只作用于左侧输入框，含行号与折叠三角。</span>
-                    <Select label="字体大小" value={String(fontSize)} onChange={(v) => setFontSize(Number(v))}
-                      options={FONT_SIZES.map((n) => ({ value: String(n), label: n + " px" }))} />
-                  </div>
-                  <div className="setting">
-                    <span className="setting-title">行号</span>
-                    <label className="setting-check">
-                      <input type="checkbox" checked={showLineNums} onChange={(e) => setShowLineNums(e.target.checked)} />
-                      <span>在输入框左侧显示行号。关掉后折叠三角仍在，只是不再编号。</span>
-                    </label>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              /* 帮助面板 = 整篇教程。文案全部来自 lib/help.ts 的 HELP_SECTIONS，
-                 这里只负责排版；三个空态各一句话，也在那个文件里。
-                 想改帮助里说的话，去改那个文件，别在这里加字符串。 */
-              <div className="pane">
-                <div className="pane-head">
-                  <span>帮助</span>
-                </div>
-                <div className="help">
-                  {HELP_SECTIONS.map((s) => (
-                    <div className="help-sec" key={s.id}>
-                      <span className="help-title">{s.title}</span>
-                      {s.items.map((t) => (
-                        <span className="help-line" key={t}>{t}</span>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+              {openPanel?.content}
             </div>
           </>
         )}
         <div className="activity">
-          <button className={"act" + (rightPanel === "tree" ? " on" : "")} data-tip="树形视图" aria-label="树形视图" onClick={() => setRightPanel((v) => (v === "tree" ? "none" : "tree"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 6h-8" /><path d="M21 12h-8" /><path d="M21 18h-8" /><path d="M3 6v4c0 1.1.9 2 2 2h3" /><path d="M3 10v6c0 1.1.9 2 2 2h3" /></svg></button>
-          <button className={"act" + (rightPanel === "history" ? " on" : "")} data-tip="保存记录" aria-label="保存记录" onClick={() => setRightPanel((v) => (v === "history" ? "none" : "history"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" /></svg></button>
-          <button className={"act" + (rightPanel === "help" ? " on" : "")} data-tip="帮助" aria-label="帮助" onClick={() => setRightPanel((v) => (v === "help" ? "none" : "help"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M9.3 9.4a2.8 2.8 0 1 1 3.5 2.7c-.5.18-.8.62-.8 1.15v.55" /><path d="M12 17.3h.01" /></svg></button>
-          <button className={"act" + (rightPanel === "settings" ? " on" : "")} data-tip="设置" aria-label="设置" onClick={() => setRightPanel((v) => (v === "settings" ? "none" : "settings"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+          {panels.map((p) => (
+            <button key={p.id} className={"act" + (rightPanel === p.id ? " on" : "")} data-tip={p.tip} aria-label={p.tip}
+              onClick={() => setRightPanel((v) => (v === p.id ? "none" : p.id))}>{p.icon}</button>
+          ))}
         </div>
       </div>
       {/* 消息提示：放在 .app 最后一个子元素即可——position:fixed 脱离文档流，
           不会参与 .app 的 flex 布局；也无需 portal 或改 page.tsx。 */}
-      <div className="toasts" role="status" aria-live="polite">
-        {/* 只有点 × 才关得掉，点气泡正文不做任何事（对齐 ElMessage 的行为）。
-            × 上也不挂 data-tip：气泡贴在视口右下角，提示框会被视口边缘裁掉。 */}
-        {toasts.map((t) => (
-          <div className={"toast " + t.kind + (t.leaving ? " leaving" : "")} key={t.id}>
-            {toastIcon(t.kind)}
-            <span className="toast-text">{t.text}</span>
-            <button className="toast-x" onClick={() => dropToast(t.id)} aria-label="关闭">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
-            </button>
-          </div>
-        ))}
-      </div>
+      <Toasts toasts={toasts} onDismiss={dropToast} />
     </div>
   );
 }

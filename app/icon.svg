@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="VS Json">
+  <!-- 标签页图标。背景用 --accent，花括号用 --bg：深色字形压在蓝色块上，
+       比「深色块 + 蓝色字形」在 16px 下好认得多，而标签栏里能用的就这么点像素。
+
+       两瓣的间距是这套几何里唯一要紧的数：茎落在 x=16 / x=48，中间空 32/64。
+       第一版按手写花括号的弧度画，茎只差 10/64，缩到 16px 两瓣就糊成一块蓝底黑斑。
+       现在改成「直茎 + 圆角」——圆弧只有半径 5 的四分圆，没有二次曲线的拐点，
+       小尺寸下不失真。笔画 7.5 ≈ 16px 时的 1.9px，再细就断、再粗就把中间的空隙吃掉。 -->
+  <rect width="64" height="64" rx="14" fill="#4c8dff" />
+  <g fill="none" stroke="#0f1116" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M26 12h-5a5 5 0 0 0-5 5v10a5 5 0 0 0-5 5 5 5 0 0 0 5 5v10a5 5 0 0 0 5 5h5" />
+    <path d="M38 12h5a5 5 0 0 1 5 5v10a5 5 0 0 1 5 5 5 5 0 0 1-5 5v10a5 5 0 0 1-5 5h-5" />
+  </g>
+</svg>

@@ -5,3 +5,6 @@ out
 *.log
 .env*.local
 .DS_Store
+
+# tsc 的增量构建缓存，本地产物。它还会让 tsc 在改了 tsconfig 之后误判「不用重查」。
+*.tsbuildinfo

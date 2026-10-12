@@ -1,18 +1,86 @@
+// 冒烟测试：起一个 headless Chrome，用 CDP 驱动真实的页面，跑六条断言。
+//
+// **不是测试框架**，就是一个脚本。它靠**中文按钮文字**（格式化 / 压缩 / Unicode / …）
+// 和 `.actions` / `.editor-front` 这两个类名定位元素——改按钮文字或这两个类名会悄悄把它弄坏。
+// 它也没有断言库：六条检查就是下面那个数组，失败退出码非零。
+//
+// 用法（先自己把 dev server 起在 3112 上，见 README）：
+//   npm run e2e
+//
+// 可覆盖的环境变量：
+//   APP_URL      被测地址，默认 http://localhost:3112/
+//   CHROME_PATH  浏览器可执行文件，默认按平台自动找
+//   CDP_PORT     调试端口，默认 9333
 const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const http = require("http");
-const { spawn } = require("child_process");
-const WebSocket = require("C:/Users/31548/Desktop/JustPlay/pi/node_modules/ws");
-const CHROME = "C:/Program Files/Google/Chrome/Application/chrome.exe";
-const PORT = 9333;
-function httpJson(path) { return new Promise(function (res, rej) { http.get({ host: "127.0.0.1", port: PORT, path: path }, function (r) { let b = ""; r.on("data", function (c) { b += c; }); r.on("end", function () { try { res(JSON.parse(b)); } catch (e) { rej(e); } }); }).on("error", rej); }); }
+const { spawn, spawnSync } = require("child_process");
+
+let WebSocket;
+try {
+  WebSocket = require("ws");
+} catch (e) {
+  console.error("缺少依赖 ws。先跑一次 npm install。");
+  process.exit(1);
+}
+
+const APP_URL = process.env.APP_URL || "http://localhost:3112/";
+const PORT = Number(process.env.CDP_PORT || 9333);
+
+// 各平台常见的安装位置。CHROME_PATH 一设就完全覆盖这里。
+// Edge 排在最后当下位替代：它同样是 Chromium，CDP 协议一样能跑。
+function findBrowser() {
+  if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
+  const candidates = [];
+  if (process.platform === "win32") {
+    const pf = process.env["ProgramFiles"] || "C:\\Program Files";
+    const pf86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+    const local = process.env["LOCALAPPDATA"] || "";
+    candidates.push(
+      path.join(pf, "Google/Chrome/Application/chrome.exe"),
+      path.join(pf86, "Google/Chrome/Application/chrome.exe"),
+      local && path.join(local, "Google/Chrome/Application/chrome.exe"),
+      path.join(pf, "Microsoft/Edge/Application/msedge.exe"),
+      path.join(pf86, "Microsoft/Edge/Application/msedge.exe"),
+    );
+  } else if (process.platform === "darwin") {
+    candidates.push(
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+      "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    );
+  } else {
+    for (const name of ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"]) {
+      const r = spawnSync("which", [name], { encoding: "utf8" });
+      if (r.status === 0 && r.stdout.trim()) return r.stdout.trim();
+    }
+  }
+  return candidates.filter(Boolean).find(function (p) { return fs.existsSync(p); });
+}
+
+const CHROME = findBrowser();
+if (!CHROME) {
+  console.error("找不到 Chrome / Edge。装一个，或者用 CHROME_PATH 指一个：");
+  console.error("  CHROME_PATH=/path/to/chrome npm run e2e");
+  process.exit(1);
+}
+
+// CDP 的 HTTP 端点固定走 127.0.0.1：Windows 上 localhost 可能先解析到 ::1，
+// 而 Chrome 的调试端口只监听 IPv4，那样会连接被拒。被测地址不受这个影响。
+function httpJson(pathname) { return new Promise(function (res, rej) { http.get({ host: "127.0.0.1", port: PORT, path: pathname }, function (r) { let b = ""; r.on("data", function (c) { b += c; }); r.on("end", function () { try { res(JSON.parse(b)); } catch (e) { rej(e); } }); }).on("error", rej); }); }
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 (async function () {
-  const tmp = "C:/Users/31548/AppData/Local/Temp/cdp-jsontool10";
+  const tmp = path.join(os.tmpdir(), "cdp-vs-json");
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {}
-  const child = spawn(CHROME, ["--headless=new", "--remote-debugging-port=" + PORT, "--user-data-dir=" + tmp, "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--window-size=1400,900", "http://127.0.0.1:3112/"], { stdio: "ignore" });
+  const child = spawn(CHROME, ["--headless=new", "--remote-debugging-port=" + PORT, "--user-data-dir=" + tmp, "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--window-size=1400,900", APP_URL], { stdio: "ignore" });
   let list = null;
   for (let i = 0; i < 40; i++) { await sleep(500); try { list = await httpJson("/json/list"); if (list && list.length) break; } catch (e) {} }
   const page = (list || []).filter(function (t) { return t.type === "page"; })[0];
+  if (!page) {
+    console.error("连不上 " + APP_URL + " ——dev server 起来了吗？");
+    child.kill(); process.exit(1);
+  }
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   let id = 0; const pending = {};
   ws.on("message", function (m) { const j = JSON.parse(m); if (j.id && pending[j.id]) { pending[j.id](j); delete pending[j.id]; } });
