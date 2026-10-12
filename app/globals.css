@@ -39,18 +39,35 @@ button { font: inherit; }
 .brand { display: flex; align-items: center; gap: 8px; flex: none; margin-right: 4px; color: var(--accent); }
 .brand-name { color: var(--fg); font-size: 16px; font-weight: 600; letter-spacing: .3px; }
 .actions { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
-.settings { display: flex; gap: 16px; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--panel2); flex-wrap: wrap; }
-.pane > .settings { flex-direction: row; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: 10px 16px; padding: 12px; border-bottom: 0; flex: 1; min-height: 0; overflow: auto; }
-.pane > .settings .field { flex-direction: row; align-items: center; gap: 6px; min-width: 0; flex: 0 0 auto; }
-.pane > .settings .field span { white-space: nowrap; }
-.pane > .settings .field input.input, .pane > .settings .field select.input { min-width: 150px; }
-.pane > .settings .field.field-wide { flex: 1 1 100%; }
-.pane > .settings .field.field-wide input.input { flex: 1; min-width: 0; }
-.pane > .settings .field input[type="checkbox"] { align-self: flex-start; width: 18px; height: 18px; }
+/* ---- 设置面板 ----
+   底色**透明**，露出 .pane 的 --bg —— 树形视图 / 历史记录 / AI 都在这一层底色上，
+   设置原来自己铺了 --panel2，比它们亮一块，一眼就看出"不是一伙的"。
+   布局是一行一项：标签定宽，控件吃掉剩余宽度，于是所有控件的左边缘对齐成一竖线。 */
+.pane > .settings { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-bottom: 0; background: transparent; flex: 1; min-height: 0; overflow: auto; }
+.pane > .settings .field { flex-direction: row; align-items: center; gap: 10px; min-width: 0; flex: 0 0 auto; }
+/* 定宽标签列是这版布局的骨架（88px 放得下「AI 服务地址」这个最长的标签）。
+   下面 .settings-hint 的左缩进 = 88 + 10，和控件左边缘对齐。 */
+.pane > .settings .field > span { flex: 0 0 88px; color: var(--muted); font-size: 13px; white-space: nowrap; }
+/* 控件占满剩余宽度，但**封顶**：面板宽度是拖 splitter 决定的，默认就能到 800px，
+   一个写着「2 空格」的下拉拉成 800px 宽很荒唐。340px 放得下最长的那个地址。 */
+.pane > .settings .field .input { flex: 1; min-width: 0; max-width: 340px; }
+.settings-sep { flex: none; height: 1px; margin: 2px 0; background: var(--border); }
+.settings-hint { flex: none; margin: 0 0 0 98px; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
 .field { display: flex; flex-direction: column; gap: 4px; min-width: 260px; flex: 1; }
 .field span { color: var(--muted); font-size: 13px; }
-.input { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); padding: 4px 8px; font: inherit; }
+
+/* ---- 输入控件 ----
+   原生 <select> 的箭头每个平台一个样、也不吃主题色，所以 appearance:none 去掉、自己画一个，
+   视觉上和工具栏的 .caret、折叠三角是一套语言。箭头是内联 SVG data URI——
+   它拿不到 currentColor，颜色只能写死成 --muted 的 #8b93a7；本项目只有一套深色主题，
+   写死不会出问题，但**改色板时要记得同步这一处**。
+   弹出的列表是系统绘制的，改不动；:root 上的 color-scheme:dark 会让它也是深色。 */
+.input { appearance: none; height: 32px; padding: 0 30px 0 10px; background-color: var(--panel2); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b93a7' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 9px center; border: 1px solid var(--border); border-radius: 8px; color: var(--fg); font: inherit; font-size: 13.5px; }
+/* 输入框不是下拉：没有箭头，右侧内边距收回，光标也换回文本的 */
+input.input { padding-right: 10px; background-image: none; cursor: text; }
+.input:hover { border-color: var(--line); }
 .input:focus { outline: none; border-color: var(--accent); }
+.input option { background: var(--panel2); color: var(--fg); }
 .main { display: flex; flex: 1; min-height: 0; gap: 1px; padding: 3px; background: var(--panel); }
 .main > .pane { flex: 1; min-width: 0; }
 .splitter { width: 4px; flex: none; cursor: col-resize; background: transparent; border-radius: 2px; }

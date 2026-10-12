@@ -944,9 +944,12 @@ export default function JsonTool() {
                       <option value="desc">降序</option>
                     </select>
                   </label>
-
-                  <label className="field field-wide"><span>AI 服务地址</span><input className="input" value={aiEndpoint} onChange={(e) => setAiEndpoint(e.target.value)} /></label>
-                  <label className="field field-wide"><span>访问密钥（存本机 localStorage，经服务端转发）</span><input className="input" type="password" value={aiKey} onChange={(e) => setAiKey(e.target.value)} /></label>
+                  {/* AI 那两项和上面四项不是一类东西，隔一条线分开。
+                      密钥原来的长标签挤在定宽标签列里会换行，改成短标签 + 下面一行小字说明。 */}
+                  <div className="settings-sep" />
+                  <label className="field"><span>AI 服务地址</span><input className="input" value={aiEndpoint} onChange={(e) => setAiEndpoint(e.target.value)} /></label>
+                  <label className="field"><span>访问密钥</span><input className="input" type="password" value={aiKey} onChange={(e) => setAiKey(e.target.value)} /></label>
+                  <p className="settings-hint">密钥存在本机 localStorage，每次请求经服务端转发，服务端不保存。</p>
                 </div>
               </div>
             ) : (
