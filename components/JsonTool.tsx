@@ -5,12 +5,13 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { CSSProperties, ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 
 
-import { BS, HIST_KEY, HIST_MAX, HIST_MAX_CHARS, NL1, NL2, SAMPLE, TOAST_MAX, TOAST_MS, TOAST_OUT_MS } from "../lib/constants";
+import { BS, HIST_KEY, HIST_MAX, HIST_MAX_CHARS, NL1, NL2, SAMPLE, SAMPLE_GUIDE_KEY, TOAST_MAX, TOAST_MS, TOAST_OUT_MS } from "../lib/constants";
 import type { HistoryEntry, ToastKind } from "../lib/constants";
 import { collectPaths, computeStats, deepSort, findMatches, foldRanges, isObject, joinIndex, joinKey, valueClass } from "../lib/json";
 import type { FoldRange, JsonValue, Match } from "../lib/json";
 import { escapeText, escapeUnicode, reformatJson, unescapeText, unescapeUnicode } from "../lib/text";
 import { fmtBytes, fmtFileStamp, fmtRel, fmtTime, histPreview } from "../lib/format";
+import { HELP_MORE, HELP_SECTIONS, HINT_PICK } from "../lib/help";
 
 // 行号层要不要渲染的阈值。行号是**按逻辑行**渲染的（见 .editor-nums 的注释），
 // 一个逻辑行一个 <div>，所以行数直接等于 DOM 节点数。超过这个数就不画行号了：
@@ -115,6 +116,26 @@ function toastIcon(kind: ToastKind): ReactNode {
     return <svg className="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M15 9l-6 6" /><path d="M9 9l6 6" /></svg>;
   }
   return <svg className="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 11v5.5" /><path d="M12 7.6h.01" /></svg>;
+}
+
+// 空态里的提示块。文案**从 lib/help.ts 的同一份教程里挑**（HINT_PICK 说挑哪几节、每节几行），
+// 不在这里另写一份短文案——否则空态和帮助面板迟早各说各的。
+// 这儿只负责排版，一个字都不生成。
+function Hint({ where }: { where: keyof typeof HINT_PICK }) {
+  const pick = HINT_PICK[where];
+  return (
+    <div className="hint">
+      {HELP_SECTIONS.filter((s) => pick.ids.includes(s.id)).map((s) => (
+        <div className="hint-sec" key={s.id}>
+          <span className="hint-title">{s.title}</span>
+          {s.items.slice(0, pick.lines).map((t) => (
+            <span className="hint-line" key={t}>{t}</span>
+          ))}
+        </div>
+      ))}
+      <span className="hint-more">{HELP_MORE}</span>
+    </div>
+  );
 }
 
 type SelOption = { value: string; label: string };
@@ -753,7 +774,13 @@ export default function JsonTool() {
   const doClear = () => { replaceAll(""); setQuery(""); setAiOutput(""); setAiError(""); notify("已清空", "warning"); };
   // 示例 / Unicode / 转义 / 全展开全折叠 / 切面板都不加提示：
   // 它们的结果就在眼前（输入框或树立刻变了），再加一条气泡只是噪音。
-  const doSample = () => { replaceAll(SAMPLE); };
+  const doSample = () => {
+    replaceAll(SAMPLE);
+    // 示例自带的那段用法说明在第一层。树默认只展开根，不顺手把它也展开的话，
+    // 点完「示例」看到的只是一个收起来的 _用法 [5]——教程藏在一次点击后面。
+    // 用 joinKey 拼路径而不是手写 "$._用法"：非标识符的键会被转义成 $["_用法"]。
+    setExpanded(new Set(["$", joinKey("$", SAMPLE_GUIDE_KEY)]));
+  };
   // 保存 = 把当前内容记进保存记录。这是它唯一的入口，没有自动记录。
   const doSave = () => {
     if (!raw.trim()) return;
@@ -941,7 +968,7 @@ export default function JsonTool() {
               接管滚动。折叠期间编辑器是只读展示态——textarea 藏不了自己的部分文字。 */}
           <div className={"editor-wrap" + (folding ? " folded" : "") + (gutterShown ? " guttered" : "")} style={editorStyle}>
             <pre className="editor-back" ref={backRef} aria-hidden="true">{foldedText}</pre>
-            <textarea ref={editorRef} className="editor-front" value={raw} onChange={(e) => setRaw(e.target.value)} onScroll={(e) => { const st = e.currentTarget.scrollTop; const sl = e.currentTarget.scrollLeft; const bk = backRef.current; if (bk) { bk.scrollTop = st; bk.scrollLeft = sl; } const mk = marksRef.current; if (mk) { mk.scrollTop = st; mk.scrollLeft = sl; } const nm = numsRef.current; if (nm) nm.scrollTop = st; }} spellCheck={false} placeholder="粘贴 JSON，或拖入 .json 文件" />
+            <textarea ref={editorRef} className="editor-front" value={raw} onChange={(e) => setRaw(e.target.value)} onScroll={(e) => { const st = e.currentTarget.scrollTop; const sl = e.currentTarget.scrollLeft; const bk = backRef.current; if (bk) { bk.scrollTop = st; bk.scrollLeft = sl; } const mk = marksRef.current; if (mk) { mk.scrollTop = st; mk.scrollLeft = sl; } const nm = numsRef.current; if (nm) nm.scrollTop = st; }} spellCheck={false} aria-label="JSON 输入" />
             {/* 折叠期间不做搜索高亮：命中位置是按 raw 的偏移算的，折叠后行号已经重排，
                 硬套上去只会画错地方。留空层是为了保住 ref，搜索滚动那个 effect 还要用它。 */}
             <pre className="editor-marks" ref={marksRef} aria-hidden="true">{folding ? "" : highlightRaw}</pre>
@@ -972,6 +999,16 @@ export default function JsonTool() {
                 ))}
               </div>
             )}
+            {/* 输入框空态。**浮在四层之上的一条独立分支，不进那套盒子度量**——
+                文本为空时三层里一个字都没有，这里画什么都不会和它们错位。
+                它是 .editor-wrap 的最后一个子元素：z-index 和 .editor-marks 同为 1，
+                打平就按 DOM 顺序决胜，排最后正好压住那一层（那一层此时也是空的）。
+                必须低于 .editor-front 的 2 —— 那个是 z-index 决定的，和 DOM 顺序无关。 */}
+            {parsed.empty && (
+              <div className="editor-empty" aria-hidden="true">
+                <Hint where="editor" />
+              </div>
+            )}
           </div>
 
           {parsed.error && <div className="err">{parsed.error}</div>}
@@ -1000,7 +1037,7 @@ export default function JsonTool() {
                   {ready && !tooBig && <JsonNode label="$" value={parsed.value} path="$" depth={0} expanded={expanded} onToggle={onToggle} query={queryLower} activePath={activeMatch ? activeMatch.path : ""} registerRef={registerRef} onCopyPath={onCopyPath} onCopyValue={onCopyValue} />}
                   {ready && tooBig && <div className="pad muted">数据超过 5MB，未渲染树</div>}
                   {!ready && !parsed.empty && <div className="pad muted">修复 JSON 后显示结构</div>}
-                  {parsed.empty && <div className="pad muted">左侧输入 JSON 后显示结构 · 双击键名复制路径，双击值复制内容</div>}
+                  {parsed.empty && <div className="pad"><Hint where="tree" /></div>}
                 </div>
               </div>
             ) : rightPanel === "ai" ? (
@@ -1022,12 +1059,10 @@ export default function JsonTool() {
                   <button className="tool-btn hist-clear" onClick={clearHistory}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /></svg>清空记录</button>
                 </div>
                 <div className="tree">
-                  {history.length === 0 && (
-                    <div className="pad muted hist-empty">
-                      <span>还没有保存记录 · 在上方点「保存」把当前内容存下来</span>
-                      <span className="small">最多保留 {HIST_MAX} 条、总计 {fmtBytes(HIST_MAX_CHARS)}，超出时最旧的会被丢弃</span>
-                    </div>
-                  )}
+                  {/* 两个上限写在这节提示的最后一条里（数字由 HIST_MAX / HIST_MAX_CHARS 算出来）。
+                      以前这里另有一行小字重复说上限，数字还是手抄的，和常量一改就对不上——
+                      现在只此一处。 */}
+                  {history.length === 0 && <div className="pad"><Hint where="history" /></div>}
                   {history.map((h) => (
                     <div className="hist-row" key={h.id}>
                       <button className="hist-main" onClick={() => restoreHistory(h)}>
@@ -1101,13 +1136,23 @@ export default function JsonTool() {
                 </div>
               </div>
             ) : (
-              /* 帮助面板：内容**留空**，等以后填。结构和其他面板保持一样，
-                 要加东西直接往这个 .tree 里塞即可。 */
+              /* 帮助面板 = 整篇教程。文案全部来自 lib/help.ts 的 HELP_SECTIONS，
+                 这里只负责排版；另外三个空态是从**同一份**里挑几节显示的。
+                 想改帮助里说的话，去改那个文件，别在这里加字符串。 */
               <div className="pane">
                 <div className="pane-head">
                   <span>帮助</span>
                 </div>
-                <div className="tree" />
+                <div className="help">
+                  {HELP_SECTIONS.map((s) => (
+                    <div className="help-sec" key={s.id}>
+                      <span className="help-title">{s.title}</span>
+                      {s.items.map((t) => (
+                        <span className="help-line" key={t}>{t}</span>
+                      ))}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
             </div>
