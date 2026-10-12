@@ -12,24 +12,16 @@ import type { FoldRange, JsonValue, Match } from "../lib/json";
 import { escapeText, escapeUnicode, reformatJson, unescapeText, unescapeUnicode } from "../lib/text";
 import { fmtBytes, fmtFileStamp, fmtRel, fmtTime, histPreview } from "../lib/format";
 import { EMPTY_HINTS, HELP_SECTIONS } from "../lib/help";
+import { clampSide, FONT_SIZES, INDENT_STEPS, loadPrefs, PREFS_WRITE_MS, savePrefs, SETTINGS_DEFAULTS } from "../lib/prefs";
+import type { Prefs } from "../lib/prefs";
 
 // 行号层要不要渲染的阈值。行号是**按逻辑行**渲染的（见 .editor-nums 的注释），
 // 一个逻辑行一个 <div>，所以行数直接等于 DOM 节点数。超过这个数就不画行号了：
 // 输入框本身仍然正常，只是左边没有号码。别把它当成"性能优化"删掉。
 const LINE_NUM_MAX = 20000;
 
-// 设置的默认值。**各个 useState 的初值和「恢复默认」按钮共用这一份**，
-// 否则改了初值忘了改按钮（或者反过来），按钮就会把设置恢复到一个曾经是默认值的旧值。
-//
-// 这里**故意不含 AI 服务地址和访问密钥**。那两项是用户为了连上自己的服务填的**凭据**，
-// 不是显示偏好：清掉之后密钥得重新去找，而「恢复默认设置」这种按钮不该毁掉数据。
-// 缩进 / 字体大小 / 行号 / Key 排序 是纯偏好，重置显然安全且随时可以再调回来。
-const SETTINGS_DEFAULTS: { indent: number; fontSize: number; showLineNums: boolean; sortMode: "off" | "asc" | "desc" } = {
-  indent: 2,
-  fontSize: 15,
-  showLineNums: true,
-  sortMode: "off",
-};
+// 设置的默认值、可选项清单、存取逻辑都在 lib/prefs.ts —— 那里是唯一碰
+// localStorage["jsontool.prefs"] 的地方。这里只负责把它们接进组件状态。
 
 function Highlight({ text, query, active }: { text: string; query: string; active?: boolean }) {
   if (!query) return <>{text}</>;
@@ -229,16 +221,21 @@ function Select({ label, value, options, onChange }: { label: string; value: str
 }
 
 export default function JsonTool() {
+  // 偏好快照，**只读一次**，给下面几个 useState 当初值。
+  // 页面是**纯客户端渲染**的（page.tsx 里的 ssr:false），所以这份快照就是第一帧
+  // 画出来的东西——不会出现「先按默认值画一帧、等 React 跑起来再跳一下」。
+  // 这也是当初选纯客户端渲染的全部理由，别把 ssr:false 去掉。
+  const [prefs] = useState(loadPrefs);
   const [raw, setRaw] = useState("");
-  const [indent, setIndent] = useState(SETTINGS_DEFAULTS.indent);
+  const [indent, setIndent] = useState(prefs.indent);
   // 编辑器字号。只作用于左侧输入框（含行号），不影响右侧树和面板——
   // 这是代码编辑器里「字体大小」的通常含义。默认 15 对齐 body 的 font。
-  const [fontSize, setFontSize] = useState(SETTINGS_DEFAULTS.fontSize);
-  // 行号槽（号码 + 折叠三角）是否显示，设置面板可关。
-  const [showLineNums, setShowLineNums] = useState(SETTINGS_DEFAULTS.showLineNums);
+  const [fontSize, setFontSize] = useState(prefs.fontSize);
+  // 行号槽（号码 + 折叠三角）是否显示，设置面板可开。默认关闭。
+  const [showLineNums, setShowLineNums] = useState(prefs.showLineNums);
   // 已折叠的块，存的是**开括号所在的行号**（0 起）。折叠期间编辑器整体转只读展示，见 folding。
   const [folded, setFolded] = useState<Set<number>>(new Set());
-  const [sortMode, setSortMode] = useState<"off" | "asc" | "desc">(SETTINGS_DEFAULTS.sortMode);
+  const [sortMode, setSortMode] = useState<"off" | "asc" | "desc">(prefs.sortMode);
   const [openMenu, setOpenMenu] = useState<"unicode" | "escape" | null>(null);
   const [menuLocked, setMenuLocked] = useState(false);
   const toggleMenu = (id: "unicode" | "escape") => {
@@ -278,7 +275,8 @@ export default function JsonTool() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const [rightPanel, setRightPanel] = useState<"none" | "tree" | "ai" | "settings" | "history" | "help">("tree");
-  const [sideWidth, setSideWidth] = useState(50);
+  // 右侧面板宽度（百分比）。默认来自 SETTINGS_DEFAULTS = 左右 2:1。
+  const [sideWidth, setSideWidth] = useState(prefs.sideWidth);
   const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const backRef = useRef<HTMLPreElement | null>(null);
@@ -306,12 +304,25 @@ export default function JsonTool() {
     const d = dragRef.current;
     if (!d) return;
     const deltaPct = ((d.startX - e.clientX) / window.innerWidth) * 100;
-    setSideWidth(Math.min(80, Math.max(20, d.startW + deltaPct)));
+    // 夹取走 lib/prefs 的 clampSide，和「读存量时」用的是同一个范围，不会两处不一致
+    setSideWidth(clampSide(d.startW + deltaPct));
   };
   const onSplitUp = (e: ReactPointerEvent<HTMLDivElement>) => {
     dragRef.current = null;
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
   };
+
+  // 偏好变了就写回 localStorage。
+  // **防抖是必须的，不是优化**：拖 splitter 时 sideWidth 每帧都在变，一次拖动能触发
+  // 一两百次 setItem，而 localStorage 是同步 IO，不防抖拖起来会明显发顿。
+  // 依赖是下面拼出来的那个对象——任何一项变了引用就变，effect 自然重跑；
+  // 也可以理解成「这五项就是一个整体，落盘时就该一起落」。
+  const prefsNow = useMemo((): Prefs => ({ indent, fontSize, showLineNums, sortMode, sideWidth }),
+    [indent, fontSize, showLineNums, sortMode, sideWidth]);
+  useEffect(() => {
+    const t = window.setTimeout(() => savePrefs(prefsNow), PREFS_WRITE_MS);
+    return () => window.clearTimeout(t);
+  }, [prefsNow]);
 
   useEffect(() => {
     try {
@@ -859,15 +870,18 @@ export default function JsonTool() {
     }
   };
 
-  // 恢复默认设置。只碰 SETTINGS_DEFAULTS 里那四项显示偏好，
+  // 恢复默认设置。只碰 SETTINGS_DEFAULTS 里那几项显示偏好（含分栏比例），
   // **不动 AI 服务地址和访问密钥**——那是用户填的凭据，不是偏好，清掉就得重新去找。
-  // 一律给提示：四项本来就在默认值时屏幕上什么都不会变，不提示就像按钮坏了
+  // 也**不动右侧当前开着的面板**：那是「我此刻在干什么」，不是偏好。
+  // 存下来的那份不用单独清：上面那个 effect 会把默认值照常写回去，效果一样。
+  // 一律给提示：几项本来就在默认值时屏幕上什么都不会变，不提示就像按钮坏了
   // （和 格式化 是同一条规矩）。
   const doResetSettings = () => {
     setIndent(SETTINGS_DEFAULTS.indent);
     setFontSize(SETTINGS_DEFAULTS.fontSize);
     setShowLineNums(SETTINGS_DEFAULTS.showLineNums);
     setSortMode(SETTINGS_DEFAULTS.sortMode);
+    setSideWidth(SETTINGS_DEFAULTS.sideWidth);
     notify("已恢复默认设置", "success");
   };
 
@@ -1093,7 +1107,7 @@ export default function JsonTool() {
                         原来这句写的是「格式化与压缩时」，是错的。 */}
                     <span className="setting-desc">格式化时每一层嵌套缩进几个空格。压缩会去掉全部缩进和换行。</span>
                     <Select label="缩进" value={String(indent)} onChange={(v) => setIndent(Number(v))}
-                      options={[{ value: "1", label: "1 空格" }, { value: "2", label: "2 空格" }, { value: "3", label: "3 空格" }, { value: "4", label: "4 空格" }]} />
+                      options={INDENT_STEPS.map((n) => ({ value: String(n), label: n + " 空格" }))} />
                   </div>
                   {/* Key 排序 放在字体大小上面：它和缩进都是**格式化·压缩这一组**的选项，
                       两项挨着；字体大小和行号则是**编辑器显示**的偏好，自己成一组。
@@ -1109,7 +1123,7 @@ export default function JsonTool() {
                     <span className="setting-title">字体大小</span>
                     <span className="setting-desc">只作用于左侧输入框，含行号与折叠三角。</span>
                     <Select label="字体大小" value={String(fontSize)} onChange={(v) => setFontSize(Number(v))}
-                      options={[12, 13, 14, 15, 16, 17, 18, 19, 20].map((n) => ({ value: String(n), label: n + " px" }))} />
+                      options={FONT_SIZES.map((n) => ({ value: String(n), label: n + " px" }))} />
                   </div>
                   <div className="setting">
                     <span className="setting-title">行号</span>

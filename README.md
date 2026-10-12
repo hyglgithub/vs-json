@@ -47,21 +47,24 @@ npm run typecheck   # tsc --noEmit —— 本项目唯一的静态检查
 ```
 app/
   layout.tsx            服务端组件，设 metadata 并引入 globals.css
-  page.tsx              五行，只渲染 <JsonTool />
+  page.tsx              纯客户端渲染（dynamic + ssr:false），只渲染 <JsonTool />
   globals.css           全部样式（原生 CSS + 自定义属性，没有 Tailwind / CSS Modules）
   api/organize/route.ts 唯一的接口：转发给 DeepSeek 兼容服务，回吐 SSE
 components/
-  JsonTool.tsx          唯一的 "use client" 模块，交互全在这里
+  JsonTool.tsx          唯一的交互模块，交互全在这里
 lib/                    纯函数，不含 React、不含组件状态
+  prefs.ts              偏好：PREFS_KEY、默认值、可选项清单、校验与夹取
   constants.ts          NL/BS 常量、toast 参数、HIST_*、SAMPLE
   json.ts               isObject / joinKey / deepSort / findMatches / foldRanges ...
   text.ts               escapeUnicode / unescapeUnicode、escapeText / unescapeText、reformatJson
   format.ts             fmtTime / fmtRel / fmtBytes / fmtFileStamp / histPreview
-  help.ts               帮助与教程文案的**唯一来源**
+  help.ts               帮助与教程文案
 types/assets.d.ts       *.css 的环境声明
 ```
 
 拆分的界线是「这个函数需不需要看到某个 `useState`」——需要就留在 `JsonTool.tsx`，不需要才进 `lib/`。
+
+`page.tsx` 关掉了服务端渲染，这是有意的：偏好存在 localStorage 里，只有浏览器才知道。照常服务端渲染的话，送出去的 HTML 一定带默认值，浏览器会先按默认值画一帧再跳到存的值——拖过分栏的人会看到面板边缘跳一下。关掉之后 React 在第一次渲染之前就读到了存的值，第一帧就是对的。代价是首屏要等一小会儿 JS（看到的是深色背景，不会白屏）。
 
 ## AI 整理怎么配
 
@@ -76,7 +79,11 @@ types/assets.d.ts       *.css 的环境声明
 | --- | --- | --- |
 | 保存记录 | `localStorage["jsontool.history"]` | **键名不能改**，改了等于把已存的条目全部丢弃 |
 | AI 地址与密钥 | `localStorage["jsontool.ai"]` | |
-| 缩进 / Key 排序 / 字体大小 / 行号 | 只在内存里 | 刷新即回默认值 |
+| 缩进 / Key 排序 / 字体大小 / 行号 / 分栏比例 | `localStorage["jsontool.prefs"]` | 带版本号；存的格式对不上就整袋丢掉、回到默认值 |
+
+**不存**的两样：右侧当前开着哪个面板（那是「我此刻在干什么」，不是偏好，每次打开都回到树形视图）、输入框里的内容（不自动恢复草稿，和「点保存才保存」是同一条规矩）。
+
+默认值：分栏 **左右 2:1**、行号 **关闭**（折叠三角仍在）、缩进 2 空格、字号 15px、Key 排序关闭。设置面板右上角的「恢复默认」把这五项一起重置，**不动** AI 地址和密钥。
 
 ## 已知边界
 
