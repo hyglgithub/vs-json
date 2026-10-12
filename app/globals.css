@@ -197,9 +197,21 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
 /* 全局按钮交互规范：**静息 = --muted（白中透灰）**；悬停 = --fg + 8% 蓝底；按下 = 强调色 + 16% 蓝底。
    新增按钮一律挂到这里，不要单独写 hover/active，**也不要在静息态改成 --fg 或 --accent**——
    一旦某个按钮是纯白或蓝色，同一个界面里就会看出「按钮颜色不统一」（这是用户明确提过的）。
-   唯一的例外是 .act.on：活动栏里当前打开的那个面板用强调色，那是「选中态」而不是静息色。 */
-.tool-btn:hover:not(:disabled), .icon-btn:hover:not(:disabled), .search-icon:hover:not(:disabled), .menu-item:hover:not(:disabled), .twist:hover:not(:disabled), .hist-del:hover:not(:disabled), .toast-x:hover:not(:disabled) { color: var(--fg); background: rgba(76, 141, 255, .08); border-color: transparent; }
-.tool-btn:active:not(:disabled), .icon-btn:active:not(:disabled), .search-icon:active:not(:disabled), .menu-item:active:not(:disabled), .twist:active:not(:disabled), .hist-del:active:not(:disabled), .toast-x:active:not(:disabled) { color: var(--accent); background: rgba(76, 141, 255, .16); border-color: transparent; }
+   例外有两个：
+   1) .act.on —— 活动栏里当前打开的面板用强调色，那是「选中态」而不是静息色。
+   2) .actions .menu-item —— 下拉菜单项走中性灰（见它自己那组规则）。列表项**不是按钮**：
+      划过 ≠ 选中，而蓝色在这套界面里专门表达「选中/激活」，用在划过上会误导。 */
+.tool-btn:hover:not(:disabled), .icon-btn:hover:not(:disabled), .search-icon:hover:not(:disabled), .twist:hover:not(:disabled), .hist-del:hover:not(:disabled), .toast-x:hover:not(:disabled) { color: var(--fg); background: rgba(76, 141, 255, .08); border-color: transparent; }
+.tool-btn:active:not(:disabled), .icon-btn:active:not(:disabled), .search-icon:active:not(:disabled), .twist:active:not(:disabled), .hist-del:active:not(:disabled), .toast-x:active:not(:disabled) { color: var(--accent); background: rgba(76, 141, 255, .16); border-color: transparent; }
+/* 下拉菜单项**不挂上面那条全局规则**，单独一套：中性灰，不带蓝。
+   理由：蓝色在这个界面里是「选中 / 激活」的语义（活动栏当前面板、复选框、聚焦描边都是它）。
+   菜单项只是被鼠标划过，用蓝会让人以为这一项已经被选上了；按下去又变成更浓的蓝，更像是"选中了"。
+   VS Code 的下拉就是这个做法——划过是灰的一层，文字保持主色，选中态另外表达。
+   悬停 7% / 按下 13% 白，两级能一眼看出差别；文字两级都保持 --fg（按下时不再染成强调色）。
+   transition 只做背景色，80ms——够快不会拖沓，又比硬切舒服。 */
+.actions .menu-item:hover:not(:disabled) { color: var(--fg); background: rgba(255, 255, 255, .07); transition: background-color .08s ease; }
+.actions .menu-item:active:not(:disabled) { color: var(--fg); background: rgba(255, 255, 255, .13); }
+@media (prefers-reduced-motion: reduce) { .actions .menu-item:hover:not(:disabled) { transition: none; } }
 /* 悬停提示：原生 title 由系统绘制、无法跟随主题（在暗色下仍是白底），故改用自带提示。
    只给「纯图标」按钮挂 data-tip；有文字（图标+文字或纯文字）的按钮不加，避免废话。
    提示挂在按钮下方，贴右边缘的按钮改为向左展开，防止被 .pane 的 overflow:hidden 裁掉。 */
