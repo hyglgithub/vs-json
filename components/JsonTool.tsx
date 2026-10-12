@@ -1097,7 +1097,10 @@ export default function JsonTool() {
                 <div className="settings">
                   <div className="setting">
                     <span className="setting-title">缩进</span>
-                    <span className="setting-desc">格式化与压缩时，每一层嵌套缩进几个空格。</span>
+                    {/* 只对**格式化**有效：压缩走的是 reformatJson(raw, indent, false)，
+                        pretty 为假时 unit 是空串、也不插换行，indent 根本不参与。
+                        原来这句写的是「格式化与压缩时」，是错的。 */}
+                    <span className="setting-desc">格式化时每一层嵌套缩进几个空格。压缩会去掉全部缩进和换行。</span>
                     <Select label="缩进" value={String(indent)} onChange={(v) => setIndent(Number(v))}
                       options={[{ value: "1", label: "1 空格" }, { value: "2", label: "2 空格" }, { value: "3", label: "3 空格" }, { value: "4", label: "4 空格" }]} />
                   </div>

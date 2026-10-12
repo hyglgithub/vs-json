@@ -321,14 +321,24 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
 .help { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px 22px; }
 .hint { display: flex; flex-direction: column; }
 .help-sec, .hint-sec { display: flex; flex-direction: column; gap: 4px; }
-.help-sec + .help-sec, .hint-sec + .hint-sec { margin-top: 18px; }
-.help-title, .hint-title { color: var(--fg); font-size: 13.5px; font-weight: 600; line-height: 1.5; }
+.help-sec + .help-sec { margin-top: 18px; }
+.hint-sec + .hint-sec { margin-top: 14px; }
+/* 帮助面板是一篇文档，所以标题有层级：主色 + 加粗。 */
+.help-title { color: var(--fg); font-size: 13.5px; font-weight: 600; line-height: 1.5; }
+/* 三个空态则是「在你正看着的这块空白上顺手指个路」，不是文档：**一律灰色、同一字号**。
+   原来这里跟着帮助面板用了白色加粗标题，结果是周围全是灰字、只有它亮着，
+   在一大片空面板里反而成了视觉焦点，喧宾夺主。
+   分组不靠字体，靠位置和行首那个圆点——标题那行没有点，正文有。 */
+.hint-title, .hint-line { color: var(--muted); font-size: 13px; line-height: 1.7; }
+.hint-title { font-weight: 400; }
 /* 悬挂缩进：长条目折行后要对到文字那一列，不能缩到圆点底下。
    ::before 用绝对定位而不是普通行内点，就是为了让它不参与折行。 */
-.help-line, .hint-line { position: relative; padding-left: 11px; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.help-line, .hint-line { position: relative; padding-left: 11px; }
+.help-line { color: var(--muted); font-size: 13px; line-height: 1.7; }
 .help-line::before, .hint-line::before { content: "·"; position: absolute; left: 2px; color: var(--line); }
-/* 空态末尾那句指路。.hint 是 flex 列，所以 margin-top 在这里是有效的 */
-.hint-more { margin-top: 12px; color: var(--muted); font-size: 12.5px; opacity: .78; }
+/* 空态末尾那句指路。也和上面同一字号同一种灰，不另做层级。
+   .hint 是 flex 列，所以 margin-top 在这里是有效的。 */
+.hint-more { margin-top: 12px; color: var(--muted); font-size: 13px; }
 /* 消息提示（全项目通用，见 components/JsonTool.tsx 的 notify）。右下角，只有点 × 才关。
    z-index 60 是为了压过 40 的 tooltip 层——现有最高就是它。
    容器 pointer-events:none、每条 toast 再打开：否则右下角会有一块看不见的区域吃掉点击。
