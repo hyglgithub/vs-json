@@ -14,6 +14,8 @@ npm run e2e         # node e2e.cjs — needs the dev server already up
 
 There is **no test framework, no ESLint, and no Prettier** in this project. `npm run typecheck` is the whole quality gate.
 
+**CI** (`.github/workflows/ci.yml`) runs exactly those two gates — `npm run typecheck` and `npm run build` — on push and PR to `main`, on Node 22. **`e2e.cjs` is deliberately *not* in it**: it needs a live dev server plus a headless browser, and that timing is far more fragile than the two gates. On a brand-new public repo a red badge is worse than no coverage. If you add it, give it its own job rather than bolting it onto `check`.
+
 **Port 3112:** `e2e.cjs` defaults to the dev server on **3112**, so start it as `npx next dev -p 3112` when you want to drive the app or run the e2e script. The `npm run dev` script has no `-p` flag. If 3112 is taken by something else, start the app wherever and point the harness at it with `APP_URL=http://localhost:<port>/ npm run e2e`.
 
 **`e2e.cjs`** is an ad-hoc CDP harness, not a real test suite:

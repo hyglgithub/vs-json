@@ -1,0 +1,38 @@
+name: CI
+
+# 只跑两道闸：typecheck 和 build。
+#
+# **e2e.cjs 不在里面**，是有意的：它要一个跑着的 dev server 加一个 headless Chrome，
+# 而 GitHub 的 runner 上那套东西的时序（起服务、等 hydration）比这里两道闸脆得多。
+# 一个全新的公开仓库，徽章先红着比什么都劝退。要加的话另起一个 job，别塞进这里。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 连续推两次时，把上一次还没跑完的取消掉。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# CI 只需要读代码。默认权限更宽，显式收窄。
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          # 和 package.json 的 engines 对齐；本地开发用的也是 22。
+          node-version: 22
+          # 缓存 ~/.npm，省掉每次重装依赖的时间。
+          cache: npm
+      # ci 而不是 install：严格照 package-lock.json 装，lockfile 和 package.json
+      # 对不上就直接失败——这正是要它来做的事。
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build

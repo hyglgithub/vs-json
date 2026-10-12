@@ -1,5 +1,8 @@
 # VS Json
 
+[![CI](https://github.com/hyglgithub/vs-json/actions/workflows/ci.yml/badge.svg)](https://github.com/hyglgithub/vs-json/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 一个单页的 JSON 查看 / 格式化工具：左边贴 JSON，右边看结构。界面照 VS Code 来——顶栏、活动栏、设置页的分组方式都是从那儿抄的。
 
 **纯前端，没有后端**。所有 JSON 处理都在浏览器里完成，不联网、没有接口、不往任何地方发数据。
