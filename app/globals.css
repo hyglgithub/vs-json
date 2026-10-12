@@ -43,18 +43,27 @@ button { font: inherit; }
    底色**透明**，露出 .pane 的 --bg —— 树形视图 / 历史记录 / AI 都在这一层底色上，
    设置原来自己铺了 --panel2，比它们亮一块，一眼就看出"不是一伙的"。
    布局是一行一项：标签定宽，控件吃掉剩余宽度，于是所有控件的左边缘对齐成一竖线。 */
-.pane > .settings { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-bottom: 0; background: transparent; flex: 1; min-height: 0; overflow: auto; }
-.pane > .settings .field { flex-direction: row; align-items: center; gap: 10px; min-width: 0; flex: 0 0 auto; }
-/* 定宽标签列是这版布局的骨架（88px 放得下「AI 服务地址」这个最长的标签）。
-   下面 .settings-hint 的左缩进 = 88 + 10，和控件左边缘对齐。 */
-.pane > .settings .field > span { flex: 0 0 88px; color: var(--muted); font-size: 13px; white-space: nowrap; }
-/* 控件占满剩余宽度，但**封顶**：面板宽度是拖 splitter 决定的，默认就能到 800px，
-   一个写着「2 空格」的下拉拉成 800px 宽很荒唐。340px 放得下最长的那个地址。 */
-.pane > .settings .field .input { flex: 1; min-width: 0; max-width: 340px; }
-.settings-sep { flex: none; height: 1px; margin: 2px 0; background: var(--border); }
-.settings-hint { flex: none; margin: 0 0 0 98px; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
-.field { display: flex; flex-direction: column; gap: 4px; min-width: 260px; flex: 1; }
-.field span { color: var(--muted); font-size: 13px; }
+.pane > .settings { display: flex; flex-direction: column; padding: 4px 0 12px; border-bottom: 0; background: transparent; flex: 1; min-height: 0; overflow: auto; }
+/* 一项一块，竖着排：标题 → 说明 → 控件，三者左对齐。
+   照 VS Code 设置页的结构，不是「左标签 + 右控件」那种表单行——
+   那种排法标签一长就换行，而且控件被推到面板右边缘、离标题老远，一项一项读不下来。
+   块与块之间的间距由 .setting 自己的纵向 padding 给（不另设 gap），
+   这样鼠标悬停/点击的命中区域 = 视觉块本身。 */
+.setting { display: block; padding: 10px 12px; }
+.setting-title { display: block; color: var(--fg); font-size: 13.5px; font-weight: 600; line-height: 1.5; }
+.setting-desc { display: block; margin-top: 2px; color: var(--muted); font-size: 12.5px; line-height: 1.55; }
+/* 控件排在说明下面。宽度封顶：面板宽度是拖 splitter 决定的，默认就能到 800px，
+   一个写着「2 空格」的下拉拉成 800px 宽很荒唐（实测过 804px）。 */
+.setting > .input { margin-top: 8px; width: 100%; max-width: 320px; }
+/* 布尔项：一个方框 + 说明文字。方框自己画，原生 checkbox 在深色下是浅色方块，
+   和这套配色对不上。 */
+.setting-check { display: flex; align-items: flex-start; gap: 8px; margin-top: 8px; cursor: pointer; }
+.setting-check input[type="checkbox"] { flex: none; appearance: none; width: 16px; height: 16px; margin: 1px 0 0; background-color: var(--panel2); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
+.setting-check input[type="checkbox"]:hover { border-color: var(--line); }
+.setting-check input[type="checkbox"]:checked { background-color: var(--accent); border-color: var(--accent); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 12.5l5.5 5.5L20 6.5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: center; background-size: 12px 12px; }
+.setting-check input[type="checkbox"]:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(76, 141, 255, .35); }
+.setting-check span { color: var(--muted); font-size: 12.5px; line-height: 1.55; }
+.settings-sep { flex: none; height: 1px; margin: 6px 12px; background: var(--border); }
 
 /* ---- 输入控件 ----
    原生 <select> 的箭头每个平台一个样、也不吃主题色，所以 appearance:none 去掉、自己画一个，

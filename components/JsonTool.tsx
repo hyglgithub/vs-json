@@ -917,8 +917,13 @@ export default function JsonTool() {
                 <div className="pane-head">
                   <span>设置</span>
                 </div>
+                {/* 每项一块：标题（主色粗体）→ 说明（灰色小字）→ 控件，三者左对齐。
+                    这是照 VS Code 设置页的结构来的。外面套 <label> 是为了点标题也能聚焦控件，
+                    纯布尔项除外——它自己内部就是个 label，套两层会冲突。 */}
                 <div className="settings">
-                  <label className="field"><span>缩进</span>
+                  <label className="setting">
+                    <span className="setting-title">缩进</span>
+                    <span className="setting-desc">格式化与压缩时，每一层嵌套缩进几个空格。</span>
                     <select className="input" value={indent} onChange={(e) => setIndent(Number(e.target.value))}>
                       <option value={1}>1 空格</option>
                       <option value={2}>2 空格</option>
@@ -926,30 +931,40 @@ export default function JsonTool() {
                       <option value={4}>4 空格</option>
                     </select>
                   </label>
-                  <label className="field"><span>字体大小</span>
+                  <label className="setting">
+                    <span className="setting-title">字体大小</span>
+                    <span className="setting-desc">只作用于左侧输入框，含行号与折叠三角。</span>
                     <select className="input" value={fontSize} onChange={(e) => setFontSize(Number(e.target.value))}>
                       {[12, 13, 14, 15, 16, 17, 18, 19, 20].map((n) => <option key={n} value={n}>{n} px</option>)}
                     </select>
                   </label>
-                  <label className="field"><span>行号</span>
-                    <select className="input" value={showLineNums ? "on" : "off"} onChange={(e) => setShowLineNums(e.target.value === "on")}>
-                      <option value="on">显示</option>
-                      <option value="off">隐藏</option>
-                    </select>
-                  </label>
-                  <label className="field"><span>Key 排序</span>
+                  <div className="setting">
+                    <span className="setting-title">行号</span>
+                    <label className="setting-check">
+                      <input type="checkbox" checked={showLineNums} onChange={(e) => setShowLineNums(e.target.checked)} />
+                      <span>在输入框左侧显示行号。关掉后折叠三角仍在，只是不再编号。</span>
+                    </label>
+                  </div>
+                  <label className="setting">
+                    <span className="setting-title">Key 排序</span>
+                    <span className="setting-desc">格式化与压缩时，按键名重新排列各层级的字段。</span>
                     <select className="input" value={sortMode} onChange={(e) => setSortMode(e.target.value as "off" | "asc" | "desc")}>
                       <option value="off">关闭</option>
                       <option value="asc">升序</option>
                       <option value="desc">降序</option>
                     </select>
                   </label>
-                  {/* AI 那两项和上面四项不是一类东西，隔一条线分开。
-                      密钥原来的长标签挤在定宽标签列里会换行，改成短标签 + 下面一行小字说明。 */}
                   <div className="settings-sep" />
-                  <label className="field"><span>AI 服务地址</span><input className="input" value={aiEndpoint} onChange={(e) => setAiEndpoint(e.target.value)} /></label>
-                  <label className="field"><span>访问密钥</span><input className="input" type="password" value={aiKey} onChange={(e) => setAiKey(e.target.value)} /></label>
-                  <p className="settings-hint">密钥存在本机 localStorage，每次请求经服务端转发，服务端不保存。</p>
+                  <label className="setting">
+                    <span className="setting-title">AI 服务地址</span>
+                    <span className="setting-desc">点「开始分析」时请求的服务端地址。</span>
+                    <input className="input" value={aiEndpoint} onChange={(e) => setAiEndpoint(e.target.value)} />
+                  </label>
+                  <label className="setting">
+                    <span className="setting-title">访问密钥</span>
+                    <span className="setting-desc">存在本机 localStorage，每次请求经服务端转发，服务端不保存。</span>
+                    <input className="input" type="password" value={aiKey} onChange={(e) => setAiKey(e.target.value)} />
+                  </label>
                 </div>
               </div>
             ) : (
