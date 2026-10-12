@@ -7,6 +7,8 @@
 
 **纯前端，没有后端**。所有 JSON 处理都在浏览器里完成，不联网、没有接口、不往任何地方发数据。
 
+**在线使用：** <https://hyglgithub.github.io/vs-json/>（什么都不用装）
+
 ![界面](docs/screenshot.png)
 
 ## 功能
@@ -112,6 +114,22 @@ types/assets.d.ts       *.css 的环境声明
 ## 二开之前值得先读的
 
 改这个项目之前读一遍 `CLAUDE.md`——它是给改代码的人写的，里面记着那些「看着可以简化、一改就坏」的地方：四层编辑器的盒子度量必须逐像素一致、`z-index` 的两处打平陷阱、控制字符为什么写成 `String.fromCharCode(...)`、哪些 localStorage 键改不得、`notify` 为什么不去重。README 说功能，`CLAUDE.md` 说为什么长这样。
+
+## 部署
+
+线上那份在 **GitHub Pages**：<https://hyglgithub.github.io/vs-json/>，由 `.github/workflows/pages.yml` 在每次 push 到 main 时构建并发布。仓库里**不会**有构建产物，它是 GitHub 的 runner 上打包完直接传上去的。
+
+它是**静态导出**的产物（`output: 'export'`）。三件事必须同时成立，少一件就是白屏：
+
+| 条件 | 在哪 | 少了会怎样 |
+|---|---|---|
+| `output: 'export'` | `next.config.ts` | 产物不是纯静态文件，Pages 发不了 |
+| `basePath: '/vs-json'` | `next.config.ts` | Pages 的项目站点挂在 `/vs-json/` 这层子路径下，资源 URL 不带前缀就全部 404 |
+| `.nojekyll` | `public/.nojekyll` | Pages 默认拿 Jekyll 处理文件，而 Jekyll 忽略 `_` 开头的目录——Next 的资源恰好全在 `_next/` 里 |
+
+前两项由 `GITHUB_PAGES=1` 这个环境变量控制，**只在 CI 里设**。本地 `npm run dev` / `npm run build` 和部署到 Vercel / Netlify 都不受影响，仍是干净的 `/`。
+
+> fork 一份自己部署：仓库 Settings → Pages → Source 选 **GitHub Actions**，然后把 `next.config.ts` 里的 `basePath` 改成你自己的仓库名。
 
 ## License
 

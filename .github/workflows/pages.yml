@@ -1,0 +1,55 @@
+name: Deploy to GitHub Pages
+
+# 只在 main 上跑，另外留一个手动触发（Actions 页面上的 Run workflow），
+# 想重新发一次不用空提交一个 commit。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Pages 部署必须的三项：读代码、写 Pages、签 ID token（deploy-pages 靠它证明
+# 这次部署确实来自本仓库的 workflow）。
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Pages 的官方模板就是这个写法：**不取消正在进行的部署**。别的 workflow 用
+# cancel-in-progress: true 省时间，但把一次发到一半的部署掐掉，线上可能停在
+# 半新半旧的状态。宁可排队等。
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # GITHUB_PAGES=1 是**唯一**打开静态导出与 basePath 的开关（见 next.config.ts）。
+      # 少了它，产物里的资源路径不带 /vs-json 前缀，传上去就是白屏 + 满屏 404。
+      - name: Build（静态导出 + /vs-json 前缀）
+        run: npm run build
+        env:
+          GITHUB_PAGES: "1"
+      # out/.nojekyll 不用自己加：它来自 public/.nojekyll，Next 会把 public 下的
+      # 点文件一并复制进产物（实测确认过）。
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
