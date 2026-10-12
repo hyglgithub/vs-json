@@ -278,8 +278,10 @@ export default function JsonTool() {
     "--editor-font": fontSize + "px",
     "--num-ch": String(numCh),
     "--fold-w": foldCol ? "14px" : "0px",
-    // 槽整个关掉时必须显式给 0，否则 CSS 里那条 calc 会留下 16px 死宽度。
-    "--gutter": gutterShown ? "calc(var(--num-ch) * 1ch + var(--fold-w) + 16px)" : "0px",
+    // 槽整个关掉时必须显式给 0，否则 CSS 里那条 calc 会留下死宽度。
+    // 末尾那个常数 = 行号左边缘到编辑器左边（实测 = 常数 - 2）。14 → 12px，原来 16 → 20px，
+    // 行号左边留的空白比数字本身还宽，看着很空。
+    "--gutter": gutterShown ? "calc(var(--num-ch) * 1ch + var(--fold-w) + 14px)" : "0px",
   } as CSSProperties;
 
   // 折叠位置是**按行号**记的，正文一变行号就可能整体错位，所以直接全丢。
@@ -777,7 +779,7 @@ export default function JsonTool() {
           </div>
           {/* .folded 只在真的有行被藏起来时挂上：它会把 textarea 整层隐藏、让 .editor-nums
               接管滚动。折叠期间编辑器是只读展示态——textarea 藏不了自己的部分文字。 */}
-          <div className={"editor-wrap" + (folding ? " folded" : "")} style={editorStyle}>
+          <div className={"editor-wrap" + (folding ? " folded" : "") + (gutterShown ? " guttered" : "")} style={editorStyle}>
             <pre className="editor-back" ref={backRef} aria-hidden="true">{foldedText}</pre>
             <textarea ref={editorRef} className="editor-front" value={raw} onChange={(e) => setRaw(e.target.value)} onScroll={(e) => { const st = e.currentTarget.scrollTop; const sl = e.currentTarget.scrollLeft; const bk = backRef.current; if (bk) { bk.scrollTop = st; bk.scrollLeft = sl; } const mk = marksRef.current; if (mk) { mk.scrollTop = st; mk.scrollLeft = sl; } const nm = numsRef.current; if (nm) nm.scrollTop = st; }} spellCheck={false} placeholder="粘贴 JSON，或拖入 .json 文件" />
             {/* 折叠期间不做搜索高亮：命中位置是按 raw 的偏移算的，折叠后行号已经重排，

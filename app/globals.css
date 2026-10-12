@@ -61,7 +61,9 @@ button { font: inherit; }
 .side-body > .pane { flex: 1; }
 .side-body > .ai { flex: 1; }
 .pane { display: flex; flex-direction: column; background: var(--bg); min-height: 0; min-width: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.pane-head { position: relative; z-index: 3; display: flex; align-items: center; gap: 8px; padding: 0 10px; min-height: 42px; border-bottom: 1px solid var(--line); background: var(--panel2); flex-wrap: wrap; }
+/* z-index 5 而不是 3：行号层是 3，层级打平时 DOM 靠后的会赢，而 .editor-nums 在 .editor-wrap 里，
+   DOM 上排在 .pane-head 之后。取 3 的话下拉菜单和悬停提示都会被行号层盖住（号码和三角画在菜单上）。 */
+.pane-head { position: relative; z-index: 5; display: flex; align-items: center; gap: 8px; padding: 0 10px; min-height: 42px; border-bottom: 1px solid var(--line); background: var(--panel2); flex-wrap: wrap; }
 .pane-head > span:first-child { font-weight: 600; }
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
@@ -98,7 +100,11 @@ button { font: inherit; }
    z-index 3：必须压在最上面。.editor-back 的背景不透明，而行号画在它的 padding-left 区域里，
    排在它下面会被整块盖掉。pointer-events:none 保证它永远不吃点击。
    横向不同步（onScroll 只赋 scrollTop）：行号要钉死在左槽里，不能跟着正文横move。 */
-.editor-nums { z-index: 3; background: transparent; overflow: hidden; pointer-events: none; }
+/* color: transparent **不能省**：这一层的正文只用来撑高度，一个字都不该画出来。
+   漏了它的后果不是「多一层看不见的东西」——那些字会实打实用 --fg 画一遍，
+   平时和 .editor-back 像素级重合所以看不出来，一旦有东西压到编辑器上面
+   （下拉菜单、悬停提示）就会看到白字盖在它们上面，像是菜单变透明了。 */
+.editor-nums { z-index: 3; background: transparent; color: transparent; overflow: hidden; pointer-events: none; }
 /* position:relative 给 .num 当定位参照，display:block 让每个逻辑行各占一块。
    min-height **不能省**：空行（连续两个 \n）的块里只剩一个绝对定位的 .num，
    脱离文档流之后块高会塌成 0，后面所有号码就整体上移一行。1.6em 正好等于 line-height。 */
@@ -111,15 +117,21 @@ button { font: inherit; }
    让这个绝对定位元素的可用宽度算出来是负数 —— 两头一夹，shrink-to-fit 塌成 1ch，
    两位数就溢出到格子外（实测：1、10、21 的盒子全是 8.3px 宽）。nowrap 让最小宽度
    回到整个数字的宽度，盒子才撑得开。 */
-.num { position: absolute; top: 0; right: calc(100% + var(--fold-w, 0px) + 6px); white-space: nowrap; word-break: normal; color: var(--muted); }
+.num { position: absolute; top: 0; right: calc(100% + var(--fold-w, 0px) + 12px); white-space: nowrap; word-break: normal; color: var(--muted); }
 /* 折叠三角。位置和 .num 一样是相对 .num-line 的内容盒算的：right:calc(100% + 6px)
    让它紧贴正文左侧，宽度就是 --fold-w 那一列。
    height 给 1.6em 是为了让三角在这一行里垂直居中（父块正好一行高）。
    pointer-events:auto 必须显式给——整层 .editor-nums 是 none，否则点不到。 */
-.num-fold { position: absolute; top: 0; right: calc(100% + 6px); width: 14px; height: 1.6em; display: flex; align-items: center; justify-content: center; padding: 0; background: none; border: 0; border-radius: 3px; color: var(--muted); cursor: pointer; pointer-events: auto; }
+.num-fold { position: absolute; top: 0; right: calc(100% + 12px); width: 14px; height: 1.6em; display: flex; align-items: center; justify-content: center; padding: 0; background: none; border: 0; border-radius: 3px; color: var(--muted); cursor: pointer; pointer-events: auto; }
 .num-fold:hover { color: var(--fg); background: rgba(76, 141, 255, .18); }
 /* 折起来时三角转成 ▶ 指右 */
 .num-fold.on svg { transform: rotate(-90deg); }
+/* 行号槽与正文之间的竖向分隔线。画在 .editor-wrap 的伪元素上而不是行号层里：
+   行号层是要竖向滚动的，线挂在它上面会跟着内容一起跑（而且 .num-line 是逐行的，成不了整条线）。
+   位置取折叠列右边缘与正文之间的中点（那块间隙 12px，所以是 -6px）。
+   z-index 2 必须给：.editor-back 的背景不透明，排在它下面会被整块盖掉。
+   .guttered 只在槽真的显示时挂上，关掉行号时这线也得跟着消失。 */
+.editor-wrap.guttered::after { content: ""; position: absolute; top: 0; bottom: 0; left: calc(10px + var(--gutter) - 6px); width: 1px; background: var(--line); z-index: 2; pointer-events: none; }
 /* 折叠期间：textarea 整层让位。它藏不了自己的部分文字，只要还看得见，
    被藏掉那几行的位置就会和 .editor-back 错开，下面全部错位。
    visibility:hidden 同时把它从命中测试和 Tab 序列里摘出去（焦点由 toggleFold 主动 blur）。 */
