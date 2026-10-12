@@ -66,6 +66,8 @@ button { font: inherit; }
 .setting-check input[type="checkbox"]:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(76, 141, 255, .35); }
 .setting-check span { color: var(--muted); font-size: 12.5px; line-height: 1.55; }
 .settings-sep { flex: none; height: 1px; margin: 6px 12px; background: var(--border); }
+/* 「恢复默认」推到标题栏最右（同 .hist-clear / .ai-run 的做法） */
+.set-reset { margin-left: auto; }
 
 /* ---- 输入控件 ----
    原生 <select> 的箭头每个平台一个样、也不吃主题色，所以 appearance:none 去掉、自己画一个，
@@ -210,6 +212,10 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
    代价是要自己处理滚动（JS 里监听 scroll 直接关掉）和贴边翻转（同见 JS）。
    min-width 也要压掉：.menu 默认 160px，比按钮窄时会把它撑开。 */
 .sel-menu { position: fixed; min-width: 0; }
+/* 选项高度对齐收起态的控件。.menu-item 默认上下 padding 7px → 24+14 = 38px，
+   比 .input 的 32px 高出 6px，一展开就看得出来上下两块不一样高。4px 正好补成 32。
+   **只改设置这一处**：工具栏那两个菜单没有"上面的控件"可比，保持原来的宽松尺寸。 */
+.sel-menu .menu-item { padding: 4px 10px; }
 .tool-icons { margin-left: auto; display: flex; align-items: center; gap: 4px; }
 .icon-btn { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: none; border: 1px solid transparent; border-radius: 8px; color: var(--muted); cursor: pointer; }
 /* 全局按钮交互规范：**静息 = --muted（白中透灰）**；悬停 = --fg + 8% 蓝底；按下 = 强调色 + 16% 蓝底。

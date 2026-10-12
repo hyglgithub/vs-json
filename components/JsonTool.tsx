@@ -17,6 +17,19 @@ import { fmtBytes, fmtFileStamp, fmtRel, fmtTime, histPreview } from "../lib/for
 // 输入框本身仍然正常，只是左边没有号码。别把它当成"性能优化"删掉。
 const LINE_NUM_MAX = 20000;
 
+// 设置的默认值。**各个 useState 的初值和「恢复默认」按钮共用这一份**，
+// 否则改了初值忘了改按钮（或者反过来），按钮就会把设置恢复到一个曾经是默认值的旧值。
+//
+// 这里**故意不含 AI 服务地址和访问密钥**。那两项是用户为了连上自己的服务填的**凭据**，
+// 不是显示偏好：清掉之后密钥得重新去找，而「恢复默认设置」这种按钮不该毁掉数据。
+// 缩进 / 字体大小 / 行号 / Key 排序 是纯偏好，重置显然安全且随时可以再调回来。
+const SETTINGS_DEFAULTS: { indent: number; fontSize: number; showLineNums: boolean; sortMode: "off" | "asc" | "desc" } = {
+  indent: 2,
+  fontSize: 15,
+  showLineNums: true,
+  sortMode: "off",
+};
+
 function Highlight({ text, query, active }: { text: string; query: string; active?: boolean }) {
   if (!query) return <>{text}</>;
   const lower = text.toLowerCase();
@@ -209,15 +222,15 @@ function Select({ label, value, options, onChange }: { label: string; value: str
 
 export default function JsonTool() {
   const [raw, setRaw] = useState("");
-  const [indent, setIndent] = useState(2);
+  const [indent, setIndent] = useState(SETTINGS_DEFAULTS.indent);
   // 编辑器字号。只作用于左侧输入框（含行号），不影响右侧树和面板——
   // 这是代码编辑器里「字体大小」的通常含义。默认 15 对齐 body 的 font。
-  const [fontSize, setFontSize] = useState(15);
+  const [fontSize, setFontSize] = useState(SETTINGS_DEFAULTS.fontSize);
   // 行号槽（号码 + 折叠三角）是否显示，设置面板可关。
-  const [showLineNums, setShowLineNums] = useState(true);
+  const [showLineNums, setShowLineNums] = useState(SETTINGS_DEFAULTS.showLineNums);
   // 已折叠的块，存的是**开括号所在的行号**（0 起）。折叠期间编辑器整体转只读展示，见 folding。
   const [folded, setFolded] = useState<Set<number>>(new Set());
-  const [sortMode, setSortMode] = useState<"off" | "asc" | "desc">("off");
+  const [sortMode, setSortMode] = useState<"off" | "asc" | "desc">(SETTINGS_DEFAULTS.sortMode);
   const [openMenu, setOpenMenu] = useState<"unicode" | "escape" | null>(null);
   const [menuLocked, setMenuLocked] = useState(false);
   const toggleMenu = (id: "unicode" | "escape") => {
@@ -824,6 +837,18 @@ export default function JsonTool() {
     }
   };
 
+  // 恢复默认设置。只碰 SETTINGS_DEFAULTS 里那四项显示偏好，
+  // **不动 AI 服务地址和访问密钥**——那是用户填的凭据，不是偏好，清掉就得重新去找。
+  // 一律给提示：四项本来就在默认值时屏幕上什么都不会变，不提示就像按钮坏了
+  // （和 格式化 是同一条规矩）。
+  const doResetSettings = () => {
+    setIndent(SETTINGS_DEFAULTS.indent);
+    setFontSize(SETTINGS_DEFAULTS.fontSize);
+    setShowLineNums(SETTINGS_DEFAULTS.showLineNums);
+    setSortMode(SETTINGS_DEFAULTS.sortMode);
+    notify("已恢复默认设置", "success");
+  };
+
   const activeItem = nav.length ? nav[Math.min(activeIndex, nav.length - 1)] : null;
   const activeMatch = activeItem && activeItem.tree ? activeItem.tree : null;
   const queryLower = query.trim().toLowerCase();
@@ -1019,6 +1044,11 @@ export default function JsonTool() {
               <div className="pane">
                 <div className="pane-head">
                   <span>设置</span>
+                  {/* 纯图标按钮才挂 data-tip，这个有文字，不加（见 CLAUDE.md 的提醒规矩） */}
+                  <button className="tool-btn set-reset" onClick={doResetSettings}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1" /><path d="M3.5 4.5v5h5" /></svg>
+                    恢复默认
+                  </button>
                 </div>
                 {/* 每项一块：标题（主色粗体）→ 说明（灰色小字）→ 控件，三者左对齐。
                     这是照 VS Code 设置页的结构来的。
@@ -1032,6 +1062,14 @@ export default function JsonTool() {
                     <Select label="缩进" value={String(indent)} onChange={(v) => setIndent(Number(v))}
                       options={[{ value: "1", label: "1 空格" }, { value: "2", label: "2 空格" }, { value: "3", label: "3 空格" }, { value: "4", label: "4 空格" }]} />
                   </div>
+                  {/* Key 排序 放在字体大小上面：它和缩进一样是**格式化/压缩**的选项，
+                      两项挨着；字体大小和行号则是**编辑器显示**的偏好，自己成一组。 */}
+                  <div className="setting">
+                    <span className="setting-title">Key 排序</span>
+                    <span className="setting-desc">格式化与压缩时，按键名重新排列各层级的字段。</span>
+                    <Select label="Key 排序" value={sortMode} onChange={(v) => setSortMode(v as "off" | "asc" | "desc")}
+                      options={[{ value: "off", label: "关闭" }, { value: "asc", label: "升序" }, { value: "desc", label: "降序" }]} />
+                  </div>
                   <div className="setting">
                     <span className="setting-title">字体大小</span>
                     <span className="setting-desc">只作用于左侧输入框，含行号与折叠三角。</span>
@@ -1044,12 +1082,6 @@ export default function JsonTool() {
                       <input type="checkbox" checked={showLineNums} onChange={(e) => setShowLineNums(e.target.checked)} />
                       <span>在输入框左侧显示行号。关掉后折叠三角仍在，只是不再编号。</span>
                     </label>
-                  </div>
-                  <div className="setting">
-                    <span className="setting-title">Key 排序</span>
-                    <span className="setting-desc">格式化与压缩时，按键名重新排列各层级的字段。</span>
-                    <Select label="Key 排序" value={sortMode} onChange={(v) => setSortMode(v as "off" | "asc" | "desc")}
-                      options={[{ value: "off", label: "关闭" }, { value: "asc", label: "升序" }, { value: "desc", label: "降序" }]} />
                   </div>
                   <div className="settings-sep" />
                   <div className="setting">
