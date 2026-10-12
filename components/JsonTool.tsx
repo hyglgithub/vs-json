@@ -711,7 +711,7 @@ export default function JsonTool() {
               <button className="icon-btn" onClick={doCopy} data-tip="复制" aria-label="复制"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
               {/* 扫把，不是垃圾桶。清空是「把这儿扫干净」，和历史记录里那条
                   「删除」不是一回事；两者以前共用垃圾桶图标，容易看错。 */}
-              <button className="icon-btn" onClick={doClear} data-tip="清空" aria-label="清空"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 4l-6.9 6.9"/><path d="M10.9 10.9l2.2 2.2-4.6 7.4-5-5z"/><path d="M11.6 11.6l-6.4 5.6"/><path d="M12.4 12.4l-5.6 6.4"/></svg></button>
+              <button className="icon-btn" onClick={doClear} data-tip="清空" aria-label="清空"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="10.7" y="3" width="2.6" height="7" rx="0.4"/><rect x="5.5" y="10" width="13" height="4" rx="1"/><path d="M7.5 14h9l2.5 7h-14z"/><path d="M10 15v6"/><path d="M14 15v6"/></svg></button>
             </div>
           </div>
           <div className="editor-wrap" style={editorStyle}>
