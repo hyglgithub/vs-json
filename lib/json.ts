@@ -1,0 +1,100 @@
+// JSON 值的纯函数：类型判定、路径拼接、统计、排序、搜索。
+// 这些函数不碰 React，也不碰组件状态——只是恰好长得像 UI 的一部分。
+export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+
+export type Match = { path: string; kind: string; text: string; literal: string; ancestors: string[] };
+
+
+export function isObject(v: JsonValue): v is { [key: string]: JsonValue } {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function escapeKey(k: string): string {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k) ? "." + k : "[" + JSON.stringify(k) + "]";
+}
+
+export function joinKey(base: string, key: string): string { return base + escapeKey(key); }
+
+export function joinIndex(base: string, i: number): string { return base + "[" + i + "]"; }
+
+export function valueClass(v: JsonValue): string {
+  if (v === null) return "null";
+  if (typeof v === "string") return "str";
+  if (typeof v === "number") return "number";
+  if (typeof v === "boolean") return "boolean";
+  return "null";
+}
+
+export function computeStats(v: JsonValue): { nodes: number; depth: number } {
+  if (Array.isArray(v)) {
+    let nodes = 1;
+    let depth = 0;
+    for (const item of v) {
+      const s = computeStats(item);
+      nodes += s.nodes;
+      if (s.depth > depth) depth = s.depth;
+    }
+    return { nodes, depth: depth + 1 };
+  }
+  if (isObject(v)) {
+    let nodes = 1;
+    let depth = 0;
+    for (const k of Object.keys(v)) {
+      const s = computeStats(v[k]);
+      nodes += s.nodes;
+      if (s.depth > depth) depth = s.depth;
+    }
+    return { nodes, depth: depth + 1 };
+  }
+  return { nodes: 1, depth: 0 };
+}
+
+export function collectPaths(v: JsonValue, path: string, acc: Set<string>): void {
+  if (Array.isArray(v)) {
+    acc.add(path);
+    for (let i = 0; i < v.length; i++) collectPaths(v[i], joinIndex(path, i), acc);
+    return;
+  }
+  if (isObject(v)) {
+    acc.add(path);
+    for (const k of Object.keys(v)) collectPaths(v[k], joinKey(path, k), acc);
+    return;
+  }
+}
+
+export function deepSort(v: JsonValue, desc = false): JsonValue {
+  if (Array.isArray(v)) return v.map((item) => deepSort(item, desc));
+  if (isObject(v)) {
+    const out: { [key: string]: JsonValue } = {};
+    const keys = Object.keys(v).sort();
+    if (desc) keys.reverse();
+    for (const k of keys) out[k] = deepSort(v[k], desc);
+    return out;
+  }
+  return v;
+}
+
+export function findMatches(v: JsonValue, q: string, path: string, ancestors: string[], acc: Match[], limit: number): void {
+  if (acc.length >= limit) return;
+  if (Array.isArray(v)) {
+    for (let i = 0; i < v.length; i++) {
+      findMatches(v[i], q, joinIndex(path, i), ancestors.concat([path]), acc, limit);
+      if (acc.length >= limit) return;
+    }
+    return;
+  }
+  if (isObject(v)) {
+    for (const k of Object.keys(v)) {
+      const child = joinKey(path, k);
+      if (k.toLowerCase().indexOf(q) !== -1) {
+        acc.push({ path: child, kind: "key", text: k, literal: JSON.stringify(k), ancestors: ancestors.concat([path]) });
+        if (acc.length >= limit) return;
+      }
+      findMatches(v[k], q, child, ancestors.concat([path]), acc, limit);
+      if (acc.length >= limit) return;
+    }
+    return;
+  }
+  const s = v === null ? "null" : String(v);
+  if (s.toLowerCase().indexOf(q) !== -1) acc.push({ path, kind: "value", text: s, literal: JSON.stringify(v), ancestors });
+}
