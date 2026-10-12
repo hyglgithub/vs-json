@@ -30,7 +30,12 @@ button { font: inherit; }
 *::-webkit-scrollbar-corner { background: transparent; }
 
 .app { display: flex; flex-direction: column; height: 100vh; }
-.topbar { position: relative; display: flex; align-items: center; gap: 8px; padding: 5px 14px; min-height: 54px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+/* z-index 10：搜索框的悬停提示是从 .searchbar 里往下弹的（top:100%+7px），
+   会伸进下面的 .main 区域。.searchbar 自己是 z-index 5，和 .pane-head 的 5 打平，
+   而 .topbar 原本没有 z-index、不构成层叠上下文，于是两者在同一个上下文里比 DOM 顺序——
+   .main 在后，面板就把提示盖掉了。给 .topbar 一个层叠上下文，整条顶栏连同它的提示一起抬起来。
+   10 这个值：低于 .toasts(60)，高于 .pane-head(5) 和所有编辑器层。 */
+.topbar { position: relative; z-index: 10; display: flex; align-items: center; gap: 8px; padding: 5px 14px; min-height: 54px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
 .brand { display: flex; align-items: center; gap: 8px; flex: none; margin-right: 4px; color: var(--accent); }
 .brand-name { color: var(--fg); font-size: 16px; font-weight: 600; letter-spacing: .3px; }
 .actions { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }

@@ -8,7 +8,7 @@ import type { CSSProperties, ChangeEvent, DragEvent, ReactNode } from "react";
 import { BS, HIST_KEY, HIST_MAX, HIST_MAX_CHARS, NL1, NL2, SAMPLE, TOAST_MAX, TOAST_MS, TOAST_OUT_MS } from "../lib/constants";
 import type { HistoryEntry, ToastKind } from "../lib/constants";
 import { collectPaths, computeStats, deepSort, findMatches, foldRanges, isObject, joinIndex, joinKey, valueClass } from "../lib/json";
-import type { JsonValue, Match } from "../lib/json";
+import type { FoldRange, JsonValue, Match } from "../lib/json";
 import { escapeText, escapeUnicode, reformatJson, unescapeText, unescapeUnicode } from "../lib/text";
 import { fmtBytes, fmtFileStamp, fmtRel, fmtTime, histPreview } from "../lib/format";
 
@@ -245,28 +245,34 @@ export default function JsonTool() {
   const lines = useMemo(() => raw.split(NL1), [raw]);
   const gutterOn = showLineNums && lines.length <= LINE_NUM_MAX;
   // 可折叠块。超大文档直接跳过——它是每键一次的全量扫描，和 JSON.parse 同一个量级。
-  const ranges = useMemo(() => (tooBig ? new Map<number, number>() : foldRanges(raw)), [raw, tooBig]);
-  // 真正被藏起来的物理行。开括号行和闭括号行**仍然显示**，只藏中间：
-  // `"a": [` / `1,` / `2` / `]` 折起来是 `"a": […` 然后下一行直接就是 `]`。
+  const ranges = useMemo(() => (tooBig ? new Map<number, FoldRange>() : foldRanges(raw)), [raw, tooBig]);
+  // 真正被藏起来的物理行：**含闭括号行**。整块收成一行——开口行保留，闭括号连同它后面的
+  // 逗号被接到开口行末尾，所以 `"tags": [` / 两项 / `],` 折起来就是一行 `"tags": […],`。
   const hidden = useMemo(() => {
     const h = new Set<number>();
     folded.forEach((open) => {
-      const close = ranges.get(open);
-      if (close === undefined) return;
-      for (let i = open + 1; i < close; i++) h.add(i);
+      const r = ranges.get(open);
+      if (!r) return;
+      for (let i = open + 1; i <= r.closeLine; i++) h.add(i);
     });
     return h;
   }, [folded, ranges]);
   // folding = 真的有行被藏起来了。光 folded 非空不够：块被编辑掉之后 folded 里可能留着死键。
   const folding = hidden.size > 0;
-  // 折叠后每一行显示什么（折起来那行末尾补一个 …）。**必须只有这一份**：
-  // .editor-back 把它拼成一整串，.editor-nums 逐行渲染，两边同源才不会换行分叉。
+  // 折叠后每一行显示什么。折起来那行 = 本行 + … + 闭括号行**从闭括号起**的那一段，
+  // 用 closeCol 切而不是整行照抄：闭括号行可能是 `  }],` 这种一个块收好几层的情况，
+  // 整行抄会把别的块的括号也带过来。
+  // **必须只有这一份**：.editor-back 用它拼整串，.editor-nums 逐行渲染，同源才不会换行分叉。
   const shown = useMemo(() => {
     if (!folding) return lines.map((text, i) => ({ i, text }));
     const out: { i: number; text: string }[] = [];
-    lines.forEach((l, i) => { if (!hidden.has(i)) out.push({ i, text: folded.has(i) ? l + "…" : l }); });
+    lines.forEach((l, i) => {
+      if (hidden.has(i)) return;
+      const r = folded.has(i) ? ranges.get(i) : undefined;
+      out.push({ i, text: r ? l + "…" + (lines[r.closeLine] || "").slice(r.closeCol) : l });
+    });
     return out;
-  }, [lines, hidden, folded, folding]);
+  }, [lines, hidden, folded, folding, ranges]);
   const foldedText = useMemo(() => (folding ? shown.map((s) => s.text).join(NL1) : raw), [shown, folding, raw]);
   // 行号槽宽。数字列按最大行号的位数算（两位起步，不然只有 9 行时槽口会贴住正文）；
   // 折叠列固定 14px，**有没有折叠点的行都留着**，三角才不会左右跳。
