@@ -308,6 +308,13 @@ export default function JsonTool() {
   // 格式化 / 压缩 / Unicode / 转义 / 示例 / 清空 / 上传 / 拖入 / 历史恢复 全走这里。
   const replaceAll = (t: string) => { setFolded(new Set<number>()); setRaw(t); };
 
+  // 搜索相关的一律展开。折叠期间命中标记是**不画**的（偏移按 raw 算，折叠后行号已重排），
+  // 于是搜索在折叠态下是完全死的：计数器照跳，屏幕上不出黄块，
+  // 点「下一个」也不动——它靠 querySelector('.mark.active') 定位，而那一层是空的。
+  // 与其在折叠态里再维护一套「折叠后」的偏移，不如直接展开：搜索本来就是要看结果。
+  // 已经是空的就返回同一个引用，React 跳过更新，所以无脑调用不额外渲染。
+  const unfold = useCallback(() => { setFolded((f) => (f.size ? new Set<number>() : f)); }, []);
+
   const toggleFold = (line: number) => {
     // 折叠期间 textarea 是 visibility:hidden，先把焦点交出去——
     // 否则光标还留在里面，接着打字就改到看不见的地方去了。
@@ -554,8 +561,9 @@ export default function JsonTool() {
   }, []);
 
   const stepNav = useCallback((dir: number) => {
+    unfold();
     setActiveIndex((i) => (navLenRef.current ? (i + dir + navLenRef.current) % navLenRef.current : 0));
-  }, []);
+  }, [unfold]);
 
   const startRepeat = useCallback((dir: number) => {
     stopRepeat();
@@ -733,8 +741,8 @@ export default function JsonTool() {
             <input
               className="search-input"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); setActiveIndex((i) => (nav.length ? (i + (e.shiftKey ? nav.length - 1 : 1)) % nav.length : 0)); } else if (e.key === "Escape") { setQuery(""); } }}
+              onChange={(e) => { const v = e.target.value; setQuery(v); if (v.trim()) unfold(); }}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); unfold(); setActiveIndex((i) => (nav.length ? (i + (e.shiftKey ? nav.length - 1 : 1)) % nav.length : 0)); } else if (e.key === "Escape") { setQuery(""); } }}
               placeholder="搜索"
             />
             <span className="search-count">{nav.length ? Math.min(activeIndex, nav.length - 1) + 1 + "/" + nav.length : "0/0"}</span>
