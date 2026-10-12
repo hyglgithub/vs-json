@@ -5,13 +5,13 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { CSSProperties, ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 
 
-import { BS, HIST_KEY, HIST_MAX, HIST_MAX_CHARS, NL1, NL2, SAMPLE, SAMPLE_GUIDE_KEY, TOAST_MAX, TOAST_MS, TOAST_OUT_MS } from "../lib/constants";
+import { BS, HIST_KEY, HIST_MAX, HIST_MAX_CHARS, NL1, NL2, SAMPLE, TOAST_MAX, TOAST_MS, TOAST_OUT_MS } from "../lib/constants";
 import type { HistoryEntry, ToastKind } from "../lib/constants";
 import { collectPaths, computeStats, deepSort, findMatches, foldRanges, isObject, joinIndex, joinKey, valueClass } from "../lib/json";
 import type { FoldRange, JsonValue, Match } from "../lib/json";
 import { escapeText, escapeUnicode, reformatJson, unescapeText, unescapeUnicode } from "../lib/text";
 import { fmtBytes, fmtFileStamp, fmtRel, fmtTime, histPreview } from "../lib/format";
-import { HELP_MORE, HELP_SECTIONS, HINT_PICK } from "../lib/help";
+import { EMPTY_HINTS, HELP_SECTIONS } from "../lib/help";
 
 // 行号层要不要渲染的阈值。行号是**按逻辑行**渲染的（见 .editor-nums 的注释），
 // 一个逻辑行一个 <div>，所以行数直接等于 DOM 节点数。超过这个数就不画行号了：
@@ -118,24 +118,11 @@ function toastIcon(kind: ToastKind): ReactNode {
   return <svg className="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 11v5.5" /><path d="M12 7.6h.01" /></svg>;
 }
 
-// 空态里的提示块。文案**从 lib/help.ts 的同一份教程里挑**（HINT_PICK 说挑哪几节、每节几行），
-// 不在这里另写一份短文案——否则空态和帮助面板迟早各说各的。
-// 这儿只负责排版，一个字都不生成。
-function Hint({ where }: { where: keyof typeof HINT_PICK }) {
-  const pick = HINT_PICK[where];
-  return (
-    <div className="hint">
-      {HELP_SECTIONS.filter((s) => pick.ids.includes(s.id)).map((s) => (
-        <div className="hint-sec" key={s.id}>
-          <span className="hint-title">{s.title}</span>
-          {s.items.slice(0, pick.lines).map((t) => (
-            <span className="hint-line" key={t}>{t}</span>
-          ))}
-        </div>
-      ))}
-      <span className="hint-more">{HELP_MORE}</span>
-    </div>
-  );
+// 空态里的一句话提醒。文案在 lib/help.ts 的 EMPTY_HINTS 里，这儿只负责排版。
+// **就一段灰字，没有标题、没有列表、没有「更多见帮助」**——空白面板上摆标题和条目
+// 就是「分层」，用户看过之后要求去掉。手册在帮助面板，这里只管指路。
+function Hint({ where }: { where: keyof typeof EMPTY_HINTS }) {
+  return <p className="hint">{EMPTY_HINTS[where]}</p>;
 }
 
 type SelOption = { value: string; label: string };
@@ -776,10 +763,14 @@ export default function JsonTool() {
   // 它们的结果就在眼前（输入框或树立刻变了），再加一条气泡只是噪音。
   const doSample = () => {
     replaceAll(SAMPLE);
-    // 示例自带的那段用法说明在第一层。树默认只展开根，不顺手把它也展开的话，
-    // 点完「示例」看到的只是一个收起来的 _用法 [5]——教程藏在一次点击后面。
-    // 用 joinKey 拼路径而不是手写 "$._用法"：非标识符的键会被转义成 $["_用法"]。
-    setExpanded(new Set(["$", joinKey("$", SAMPLE_GUIDE_KEY)]));
+    // 把示例的**第一层全部展开**。树默认只开根，那样点完「示例」看到的是一排收起来的
+    // [10] / {6}，十条教程全藏在点击后面。展开一层正好够：教程条目和「这份数据」的字段
+    // 都在第一层里露出来，而它自己那层嵌套仍收着，正好留给用户自己点开看折叠效果。
+    // 路径用 joinKey 拼而不是手写：像「这份数据」这种非标识符的键会被转义成 $["这份数据"]。
+    const open = new Set<string>(["$"]);
+    const root = JSON.parse(SAMPLE) as JsonValue;
+    if (isObject(root)) Object.keys(root).forEach((k) => open.add(joinKey("$", k)));
+    setExpanded(open);
   };
   // 保存 = 把当前内容记进保存记录。这是它唯一的入口，没有自动记录。
   const doSave = () => {
