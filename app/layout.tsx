@@ -14,10 +14,18 @@ import './globals.css';
 //
 // （原先只有 SVG 时，不支持 SVG favicon 的浏览器一个图标都不显示——这就是换 PNG 的原因。）
 //
-// 描述有**三条通道**共用它：搜索引擎摘要、分享链接的网页预览（Open Graph /
-// Twitter Card）、以及浏览器书签。所以下面只写一个常量，三处引它，
-// 免得改了一处忘了另一处。
-const DESCRIPTION = '自用json格式化工具，希望能帮到你';
+// **标签页上只显示 title，永远不会显示 description。** 浏览器不把 meta
+// description 画进标签页——它去的是另外三个地方：搜索摘要、分享链接的预览卡片
+// （Open Graph / Twitter Card）、以及浏览器书签。想让它出现在标签页上，
+// 只能是把它写进 title，就是下面这么做。
+//
+// 标题带半句说明是有意的：title 同时是搜索结果的标题和分享卡片的标题，只写
+// 「VS Json」的话，别人在任何列表里都看不出这是个什么东西。但也别再往上加——
+// 标签页开满时会被截断，Google 也只显示 30 个字符出头。
+const TAGLINE = '自用json格式化工具';
+const TITLE = 'VS Json - ' + TAGLINE;
+// 描述是标签页标题那半句的完整版：标题里放不下的「希望能帮到你」在这儿。
+const DESCRIPTION = TAGLINE + '，希望能帮到你';
 
 // 分享出去的预览必须是**绝对地址**，所以得给 metadataBase。默认值是本地开发
 // 地址；CI 里由 pages.yml 传 NEXT_PUBLIC_SITE_URL。
@@ -29,13 +37,13 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3112';
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: 'VS Json',
+  title: TITLE,
   description: DESCRIPTION,
   applicationName: 'VS Json',
   openGraph: {
     type: 'website',
     siteName: 'VS Json',
-    title: 'VS Json',
+    title: TITLE,
     description: DESCRIPTION,
     // 预览图用界面截图而不是那个图标：分享出去时，一张能看出这是干什么的界面
     // 比一个 64px 的角标有用得多。文件在 public/，会被原样复制进产物。
@@ -43,7 +51,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'VS Json',
+    title: TITLE,
     description: DESCRIPTION,
     images: ['/screenshot.png'],
   },

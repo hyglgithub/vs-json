@@ -246,7 +246,7 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
   pointer-events: none; opacity: 0; transition: opacity .12s ease;
 }
 [data-tip]:hover::after { opacity: 1; transition-delay: .28s; }
-.tool-icons [data-tip]::after, .activity [data-tip]::after, .hist-del[data-tip]::after { left: auto; right: 0; transform: none; }
+.tool-icons [data-tip]::after, .activity [data-tip]::after, .hist-del[data-tip]::after, .topbar-link[data-tip]::after { left: auto; right: 0; transform: none; }
 .twist { width: 16px; flex: none; background: none; border: 0; border-radius: 4px; color: var(--muted); cursor: pointer; padding: 0; text-align: center; }
 .idx { color: var(--muted); }
 .colon { color: var(--muted); }
@@ -280,6 +280,12 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
    原来那条 margin-left:auto 是把它推到右边缘用的，留着会把它从标题旁推开；
    这里只补一点点间距（.brand 自己还有 gap:8px）。顶栏右侧那块位置空出来另有用途。 */
 .topbar-stats { margin-left: 2px; }
+/* 顶栏右上角那个 GitHub 链接。**复用 .icon-btn**——尺寸、静息色、悬停/按下都跟工具栏
+   那排图标一致，靠的就是挂到上面那条按钮交互规范上，所以这里只补两件它没有的事：
+   margin-left:auto 把它顶到最右（顶栏是 flex，搜索框是绝对居中的，推它不会歪），
+   以及它是个 <a> 得去掉下划线。
+   静态色**不要**在这里写 color——写了就违反「静息一律 --muted」那条规矩。 */
+.topbar-link { margin-left: auto; text-decoration: none; }
 .search-pill { display: flex; align-items: center; gap: 2px; width: min(420px, 100%); padding: 3px 6px 3px 14px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 2px 10px rgba(0, 0, 0, .35); transition: border-color .15s; }
 .search-pill:focus-within { border-color: var(--accent); }
 .search-input { flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: var(--fg); font: inherit; font-size: 14px; padding: 4px 0; }
