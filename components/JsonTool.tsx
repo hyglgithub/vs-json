@@ -1104,8 +1104,10 @@ export default function JsonTool() {
                     <Select label="缩进" value={String(indent)} onChange={(v) => setIndent(Number(v))}
                       options={[{ value: "1", label: "1 空格" }, { value: "2", label: "2 空格" }, { value: "3", label: "3 空格" }, { value: "4", label: "4 空格" }]} />
                   </div>
-                  {/* Key 排序 放在字体大小上面：它和缩进一样是**格式化/压缩**的选项，
-                      两项挨着；字体大小和行号则是**编辑器显示**的偏好，自己成一组。 */}
+                  {/* Key 排序 放在字体大小上面：它和缩进都是**格式化·压缩这一组**的选项，
+                      两项挨着；字体大小和行号则是**编辑器显示**的偏好，自己成一组。
+                      （组名是「格式化·压缩」，但缩进只对格式化生效，Key 排序才是两者都生效——
+                      别把组名当成「两项都影响两者」，那句错话就是这么来的。） */}
                   <div className="setting">
                     <span className="setting-title">Key 排序</span>
                     <span className="setting-desc">格式化与压缩时，按键名重新排列各层级的字段。</span>
