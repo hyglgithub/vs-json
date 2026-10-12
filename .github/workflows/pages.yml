@@ -37,6 +37,13 @@ jobs:
         run: npm run build
         env:
           GITHUB_PAGES: "1"
+          # 分享预览（og:image）必须是绝对地址，靠这个给 metadataBase。
+          # **这里必须带上 /vs-json**：Next 只给图标、静态资源那些走文件约定的东西
+          # 自动加 basePath，Open Graph 的图片路径它**不管**——实测少这层前缀时，
+          # 生成的是 https://hyglgithub.github.io/screenshot.png，分享出去图是 404。
+          # 带上前缀之后是 https://hyglgithub.github.io/vs-json/screenshot.png ✓，
+          # 而且不会重复（因为 Next 本来就没加）。
+          NEXT_PUBLIC_SITE_URL: https://hyglgithub.github.io/vs-json
       # out/.nojekyll 不用自己加：它来自 public/.nojekyll，Next 会把 public 下的
       # 点文件一并复制进产物（实测确认过）。
       - uses: actions/configure-pages@v6
