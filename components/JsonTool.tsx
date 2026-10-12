@@ -7,7 +7,7 @@ import type { CSSProperties, ChangeEvent, DragEvent, ReactNode } from "react";
 
 import { BS, HIST_KEY, HIST_MAX, HIST_MAX_CHARS, NL1, NL2, SAMPLE, TOAST_MAX, TOAST_MS, TOAST_OUT_MS } from "../lib/constants";
 import type { HistoryEntry, ToastKind } from "../lib/constants";
-import { collectPaths, computeStats, deepSort, findMatches, isObject, joinIndex, joinKey, valueClass } from "../lib/json";
+import { collectPaths, computeStats, deepSort, findMatches, foldRanges, isObject, joinIndex, joinKey, valueClass } from "../lib/json";
 import type { JsonValue, Match } from "../lib/json";
 import { escapeText, escapeUnicode, reformatJson, unescapeText, unescapeUnicode } from "../lib/text";
 import { fmtBytes, fmtFileStamp, fmtRel, fmtTime, histPreview } from "../lib/format";
@@ -110,6 +110,10 @@ export default function JsonTool() {
   // 编辑器字号。只作用于左侧输入框（含行号），不影响右侧树和面板——
   // 这是代码编辑器里「字体大小」的通常含义。默认 15 对齐 body 的 font。
   const [fontSize, setFontSize] = useState(15);
+  // 行号槽（号码 + 折叠三角）是否显示，设置面板可关。
+  const [showLineNums, setShowLineNums] = useState(true);
+  // 已折叠的块，存的是**开括号所在的行号**（0 起）。折叠期间编辑器整体转只读展示，见 folding。
+  const [folded, setFolded] = useState<Set<number>>(new Set());
   const [sortMode, setSortMode] = useState<"off" | "asc" | "desc">("off");
   const [openMenu, setOpenMenu] = useState<"unicode" | "escape" | null>(null);
   const [menuLocked, setMenuLocked] = useState(false);
@@ -239,14 +243,71 @@ export default function JsonTool() {
   // 能做到这点，靠的是 .editor-nums 与 .editor-back 的盒子尺寸、字体、换行规则完全一致——
   // 某个逻辑行在编辑器里占几行，行号层里那个块就占几行高，下一个号码自然落在下一个行首。
   const lines = useMemo(() => raw.split(NL1), [raw]);
-  const showNums = lines.length <= LINE_NUM_MAX;
-  // 槽宽按最大行号的位数算，两位起步（不然只有 9 行时槽口会窄得贴住正文）。
-  // 用 ch 而不是 px：字号是可调的，ch 会跟着 --editor-font 一起缩放。
-  const gutterW = Math.max(2, String(lines.length).length);
+  const gutterOn = showLineNums && lines.length <= LINE_NUM_MAX;
+  // 可折叠块。超大文档直接跳过——它是每键一次的全量扫描，和 JSON.parse 同一个量级。
+  const ranges = useMemo(() => (tooBig ? new Map<number, number>() : foldRanges(raw)), [raw, tooBig]);
+  // 真正被藏起来的物理行。开括号行和闭括号行**仍然显示**，只藏中间：
+  // `"a": [` / `1,` / `2` / `]` 折起来是 `"a": […` 然后下一行直接就是 `]`。
+  const hidden = useMemo(() => {
+    const h = new Set<number>();
+    folded.forEach((open) => {
+      const close = ranges.get(open);
+      if (close === undefined) return;
+      for (let i = open + 1; i < close; i++) h.add(i);
+    });
+    return h;
+  }, [folded, ranges]);
+  // folding = 真的有行被藏起来了。光 folded 非空不够：块被编辑掉之后 folded 里可能留着死键。
+  const folding = hidden.size > 0;
+  // 折叠后每一行显示什么（折起来那行末尾补一个 …）。**必须只有这一份**：
+  // .editor-back 把它拼成一整串，.editor-nums 逐行渲染，两边同源才不会换行分叉。
+  const shown = useMemo(() => {
+    if (!folding) return lines.map((text, i) => ({ i, text }));
+    const out: { i: number; text: string }[] = [];
+    lines.forEach((l, i) => { if (!hidden.has(i)) out.push({ i, text: folded.has(i) ? l + "…" : l }); });
+    return out;
+  }, [lines, hidden, folded, folding]);
+  const foldedText = useMemo(() => (folding ? shown.map((s) => s.text).join(NL1) : raw), [shown, folding, raw]);
+  // 行号槽宽。数字列按最大行号的位数算（两位起步，不然只有 9 行时槽口会贴住正文）；
+  // 折叠列固定 14px，**有没有折叠点的行都留着**，三角才不会左右跳。
+  // 用 ch 不用 px：字号可调，ch 会跟着 --editor-font 一起缩放。
+  const numCh = gutterOn ? Math.max(2, String(lines.length).length) : 0;
+  const foldCol = gutterOn && ranges.size > 0;
+  const gutterShown = gutterOn || foldCol;
   const editorStyle = {
     "--editor-font": fontSize + "px",
-    "--gutter": showNums ? "calc(" + gutterW + " * 1ch + 16px)" : "0px",
+    "--num-ch": String(numCh),
+    "--fold-w": foldCol ? "14px" : "0px",
+    // 槽整个关掉时必须显式给 0，否则 CSS 里那条 calc 会留下 16px 死宽度。
+    "--gutter": gutterShown ? "calc(var(--num-ch) * 1ch + var(--fold-w) + 16px)" : "0px",
   } as CSSProperties;
+
+  // 折叠位置是**按行号**记的，正文一变行号就可能整体错位，所以直接全丢。
+  // 返回同一个引用时 React 会跳过这次更新，所以每敲一个字并不会多渲染一次。
+  useEffect(() => { setFolded((f) => (f.size ? new Set<number>() : f)); }, [raw]);
+
+  const toggleFold = (line: number) => {
+    // 折叠期间 textarea 是 visibility:hidden，先把焦点交出去——
+    // 否则光标还留在里面，接着打字就改到看不见的地方去了。
+    editorRef.current?.blur();
+    setFolded((prev) => {
+      const next = new Set(prev);
+      if (next.has(line)) next.delete(line); else next.add(line);
+      return next;
+    });
+  };
+
+  // 折叠期间 .editor-nums 变成滚动驱动（textarea 那时不可交互），把它的位置推给另外两层。
+  // 依赖 folding 而不是每次渲染：平时是 textarea 推 nums，反过来推会打架。
+  useEffect(() => {
+    const nm = numsRef.current;
+    if (!nm) return;
+    const st = nm.scrollTop;
+    const bk = backRef.current;
+    if (bk) { bk.scrollTop = st; bk.scrollLeft = 0; }
+    const mk = marksRef.current;
+    if (mk) mk.scrollTop = st;
+  }, [folding]);
   const info = useMemo(() => (ready ? computeStats(parsed.value) : { nodes: 0, depth: 0 }), [ready, parsed.value]);
 
   const matches = useMemo(() => {
@@ -714,17 +775,38 @@ export default function JsonTool() {
               <button className="icon-btn" onClick={doClear} data-tip="清空" aria-label="清空"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="10.7" y="3" width="2.6" height="7" rx="0.4"/><rect x="5.5" y="10" width="13" height="4" rx="1"/><path d="M7.5 14h9l2.5 7h-14z"/><path d="M10 15v6"/><path d="M14 15v6"/></svg></button>
             </div>
           </div>
-          <div className="editor-wrap" style={editorStyle}>
-            <pre className="editor-back" ref={backRef} aria-hidden="true">{raw}</pre>
+          {/* .folded 只在真的有行被藏起来时挂上：它会把 textarea 整层隐藏、让 .editor-nums
+              接管滚动。折叠期间编辑器是只读展示态——textarea 藏不了自己的部分文字。 */}
+          <div className={"editor-wrap" + (folding ? " folded" : "")} style={editorStyle}>
+            <pre className="editor-back" ref={backRef} aria-hidden="true">{foldedText}</pre>
             <textarea ref={editorRef} className="editor-front" value={raw} onChange={(e) => setRaw(e.target.value)} onScroll={(e) => { const st = e.currentTarget.scrollTop; const sl = e.currentTarget.scrollLeft; const bk = backRef.current; if (bk) { bk.scrollTop = st; bk.scrollLeft = sl; } const mk = marksRef.current; if (mk) { mk.scrollTop = st; mk.scrollLeft = sl; } const nm = numsRef.current; if (nm) nm.scrollTop = st; }} spellCheck={false} placeholder="粘贴 JSON，或拖入 .json 文件" />
-            <pre className="editor-marks" ref={marksRef} aria-hidden="true">{highlightRaw}</pre>
-            {/* 行号层：`{line}` 是**透明的**，只用来把每个逻辑行撑到和编辑器里一样高，
+            {/* 折叠期间不做搜索高亮：命中位置是按 raw 的偏移算的，折叠后行号已经重排，
+                硬套上去只会画错地方。留空层是为了保住 ref，搜索滚动那个 effect 还要用它。 */}
+            <pre className="editor-marks" ref={marksRef} aria-hidden="true">{folding ? "" : highlightRaw}</pre>
+            {/* 行号层：`{s.text}` 是**透明的**，只用来把每个逻辑行撑到和编辑器里一样高，
                 这样折行的续行不会让后面的号码往上跑。真正显示的只有绝对定位的 .num。
-                它是第 4 层，但和前三层不共享滚动——textarea 的 onScroll 直接赋 scrollTop。 */}
-            {showNums && (
-              <div className="editor-nums" ref={numsRef} aria-hidden="true">
-                {lines.map((line, i) => (
-                  <div className="num-line" key={i}><span className="num">{i + 1}</span>{line}</div>
+                它是第 4 层，和前三层不共享滚动——平时由 textarea 的 onScroll 推，
+                折叠时（textarea 已不可交互）反过来由它自己推给另外两层。 */}
+            {gutterShown && (
+              <div className="editor-nums" ref={numsRef} aria-hidden="true"
+                onClick={() => { if (folding) setFolded(new Set()); }}
+                onScroll={(e) => {
+                  if (!folding) return;
+                  const st = e.currentTarget.scrollTop;
+                  const bk = backRef.current; if (bk) bk.scrollTop = st;
+                  const mk = marksRef.current; if (mk) mk.scrollTop = st;
+                }}>
+                {shown.map((s, k) => (
+                  <div className="num-line" key={s.i}>
+                    {gutterOn && <span className="num">{k + 1}</span>}
+                    {ranges.has(s.i) && (
+                      <button className={"num-fold" + (folding && folded.has(s.i) ? " on" : "")} tabIndex={-1} aria-label="折叠"
+                        onClick={(e) => { e.stopPropagation(); toggleFold(s.i); }}>
+                        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1.4 2.6L5 7.2l3.6-4.6z" fill="currentColor" /></svg>
+                      </button>
+                    )}
+                    {s.text}
+                  </div>
                 ))}
               </div>
             )}
@@ -817,6 +899,12 @@ export default function JsonTool() {
                   <label className="field"><span>字体大小</span>
                     <select className="input" value={fontSize} onChange={(e) => setFontSize(Number(e.target.value))}>
                       {[12, 13, 14, 15, 16, 17, 18, 19, 20].map((n) => <option key={n} value={n}>{n} px</option>)}
+                    </select>
+                  </label>
+                  <label className="field"><span>行号</span>
+                    <select className="input" value={showLineNums ? "on" : "off"} onChange={(e) => setShowLineNums(e.target.value === "on")}>
+                      <option value="on">显示</option>
+                      <option value="off">隐藏</option>
                     </select>
                   </label>
                   <label className="field"><span>Key 排序</span>

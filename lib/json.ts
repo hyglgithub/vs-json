@@ -98,3 +98,39 @@ export function findMatches(v: JsonValue, q: string, path: string, ancestors: st
   const s = v === null ? "null" : String(v);
   if (s.toLowerCase().indexOf(q) !== -1) acc.push({ path, kind: "value", text: s, literal: JSON.stringify(v), ancestors });
 }
+
+// 可折叠块扫描：返回「开括号所在行 → 闭括号所在行」，只保留**跨行**的块。行号从 0 开始。
+// 走纯文本扫描而不是复用 JSON.parse 的结果，是因为 AST 里根本没有行号，而折叠恰恰是按行操作的。
+// 必须跳过字符串字面量里的括号（`{"a": "[{"}` 这种值里的括号不能算数），所以带了转义状态机。
+// JSON 没有注释，因此不用处理注释；newline 上重置 esc 只是防御非法转义把状态带过行。
+export function foldRanges(text: string): Map<number, number> {
+  const NL = String.fromCharCode(10);
+  const BS = String.fromCharCode(92);
+  const DQ = String.fromCharCode(34);
+  const LB = String.fromCharCode(123);
+  const RB = String.fromCharCode(125);
+  const LS = String.fromCharCode(91);
+  const RS = String.fromCharCode(93);
+  const out = new Map<number, number>();
+  const stack: number[] = [];
+  let line = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charAt(i);
+    if (c === NL) { line += 1; esc = false; continue; }
+    if (inStr) {
+      if (esc) { esc = false; continue; }
+      if (c === BS) { esc = true; continue; }
+      if (c === DQ) inStr = false;
+      continue;
+    }
+    if (c === DQ) { inStr = true; continue; }
+    if (c === LB || c === LS) { stack.push(line); continue; }
+    if (c === RB || c === RS) {
+      const open = stack.pop();
+      if (open !== undefined && open < line) out.set(open, line);
+    }
+  }
+  return out;
+}

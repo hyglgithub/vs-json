@@ -111,7 +111,23 @@ button { font: inherit; }
    让这个绝对定位元素的可用宽度算出来是负数 —— 两头一夹，shrink-to-fit 塌成 1ch，
    两位数就溢出到格子外（实测：1、10、21 的盒子全是 8.3px 宽）。nowrap 让最小宽度
    回到整个数字的宽度，盒子才撑得开。 */
-.num { position: absolute; top: 0; right: calc(100% + 8px); white-space: nowrap; word-break: normal; color: var(--muted); }
+.num { position: absolute; top: 0; right: calc(100% + var(--fold-w, 0px) + 6px); white-space: nowrap; word-break: normal; color: var(--muted); }
+/* 折叠三角。位置和 .num 一样是相对 .num-line 的内容盒算的：right:calc(100% + 6px)
+   让它紧贴正文左侧，宽度就是 --fold-w 那一列。
+   height 给 1.6em 是为了让三角在这一行里垂直居中（父块正好一行高）。
+   pointer-events:auto 必须显式给——整层 .editor-nums 是 none，否则点不到。 */
+.num-fold { position: absolute; top: 0; right: calc(100% + 6px); width: 14px; height: 1.6em; display: flex; align-items: center; justify-content: center; padding: 0; background: none; border: 0; border-radius: 3px; color: var(--muted); cursor: pointer; pointer-events: auto; }
+.num-fold:hover { color: var(--fg); background: rgba(76, 141, 255, .18); }
+/* 折起来时三角转成 ▶ 指右 */
+.num-fold.on svg { transform: rotate(-90deg); }
+/* 折叠期间：textarea 整层让位。它藏不了自己的部分文字，只要还看得见，
+   被藏掉那几行的位置就会和 .editor-back 错开，下面全部错位。
+   visibility:hidden 同时把它从命中测试和 Tab 序列里摘出去（焦点由 toggleFold 主动 blur）。 */
+.editor-wrap.folded .editor-front { visibility: hidden; }
+/* 折叠期间改由行号层接管滚动：此刻它是唯一还能交互的一层，
+   而且它渲染的正是折叠后的正文，scrollHeight 和另外两层一致。
+   横向不推（scrollLeft 归 0）——折叠后内容本来就是折行的，没有横向溢出。 */
+.editor-wrap.folded .editor-nums { overflow: auto; pointer-events: auto; cursor: pointer; }
 .err { color: var(--err); padding: 6px 10px; border-top: 1px solid var(--border); white-space: pre-wrap; word-break: break-all; }
 .err.inline { border: 0; padding: 0; }
 .tree { flex: 1; overflow: auto; padding: 8px 4px; min-height: 0; }
