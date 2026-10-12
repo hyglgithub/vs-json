@@ -1,0 +1,1138 @@
+"use client";
+import type { PointerEvent as ReactPointerEvent } from "react";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent, DragEvent, ReactNode } from "react";
+
+type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+
+type Match = { path: string; kind: string; text: string; literal: string; ancestors: string[] };
+
+const NL1 = String.fromCharCode(10);
+const BS = String.fromCharCode(92);
+const NL2 = NL1 + NL1;
+
+const TOAST_MS = 3000; // 消息提示自动消失（对齐 ElMessage 的 duration 默认值）
+const TOAST_OUT_MS = 200; // 退场动画时长，**必须与 CSS 里 toast-out 的 duration 一致**
+const TOAST_MAX = 5; // 同屏最多几条（活跃条数，退场中的不计入）
+
+// 消息类型，对齐 Element Plus 的 ElMessage：五型各有图标与配色。
+// 颜色全部取自项目已有的 CSS 变量，不新增色板。
+type ToastKind = "primary" | "success" | "info" | "warning" | "error";
+
+const HIST_KEY = "jsontool.history";
+const HIST_MAX = 60; // 条数上限
+const HIST_MAX_CHARS = 2 * 1024 * 1024; // 总字符上限：localStorage 配额只有几 MB，不裁会静默写失败
+
+type HistoryEntry = { id: number; ts: number; text: string };
+
+const SAMPLE = JSON.stringify(
+  {
+    orderId: "SO-2026-1012-0087",
+    status: "已发货",
+    paid: true,
+    customer: {
+      name: "张伟",
+      level: "黄金会员",
+      contact: {
+        phone: "138-0000-1234",
+        email: "zhangwei@example.com",
+      },
+    },
+    items: [
+      { name: "机械键盘", price: 499, qty: 1, onSale: false, spec: { switch: "红轴", layout: "87 键" } },
+      { name: "显示器支架", price: 159, qty: 2, onSale: true, spec: { material: "铝合金", load: "9 kg" } },
+    ],
+    shipping: {
+      province: "浙江省",
+      city: "杭州市",
+      district: "西湖区",
+      detail: "文三路 100 号 3 幢 502",
+    },
+    remark: null,
+    totalAmount: 817,
+  },
+  null,
+  2
+);
+
+function isObject(v: JsonValue): v is { [key: string]: JsonValue } {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function escapeKey(k: string): string {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k) ? "." + k : "[" + JSON.stringify(k) + "]";
+}
+
+function joinKey(base: string, key: string): string { return base + escapeKey(key); }
+
+function joinIndex(base: string, i: number): string { return base + "[" + i + "]"; }
+
+function valueClass(v: JsonValue): string {
+  if (v === null) return "null";
+  if (typeof v === "string") return "str";
+  if (typeof v === "number") return "number";
+  if (typeof v === "boolean") return "boolean";
+  return "null";
+}
+
+function computeStats(v: JsonValue): { nodes: number; depth: number } {
+  if (Array.isArray(v)) {
+    let nodes = 1;
+    let depth = 0;
+    for (const item of v) {
+      const s = computeStats(item);
+      nodes += s.nodes;
+      if (s.depth > depth) depth = s.depth;
+    }
+    return { nodes, depth: depth + 1 };
+  }
+  if (isObject(v)) {
+    let nodes = 1;
+    let depth = 0;
+    for (const k of Object.keys(v)) {
+      const s = computeStats(v[k]);
+      nodes += s.nodes;
+      if (s.depth > depth) depth = s.depth;
+    }
+    return { nodes, depth: depth + 1 };
+  }
+  return { nodes: 1, depth: 0 };
+}
+
+function collectPaths(v: JsonValue, path: string, acc: Set<string>): void {
+  if (Array.isArray(v)) {
+    acc.add(path);
+    for (let i = 0; i < v.length; i++) collectPaths(v[i], joinIndex(path, i), acc);
+    return;
+  }
+  if (isObject(v)) {
+    acc.add(path);
+    for (const k of Object.keys(v)) collectPaths(v[k], joinKey(path, k), acc);
+    return;
+  }
+}
+
+function deepSort(v: JsonValue, desc = false): JsonValue {
+  if (Array.isArray(v)) return v.map((item) => deepSort(item, desc));
+  if (isObject(v)) {
+    const out: { [key: string]: JsonValue } = {};
+    const keys = Object.keys(v).sort();
+    if (desc) keys.reverse();
+    for (const k of keys) out[k] = deepSort(v[k], desc);
+    return out;
+  }
+  return v;
+}
+
+function escapeUnicode(s: string): string {
+  let out = "";
+  for (const ch of s) {
+    const c = ch.codePointAt(0) as number;
+    if (c > 0x7e) {
+      if (c > 0xffff) {
+        const h = Math.floor((c - 0x10000) / 0x400) + 0xd800;
+        const l = ((c - 0x10000) % 0x400) + 0xdc00;
+        out += "\\u" + h.toString(16).padStart(4, "0") + "\\u" + l.toString(16).padStart(4, "0");
+      } else {
+        out += "\\u" + c.toString(16).padStart(4, "0");
+      }
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+function findMatches(v: JsonValue, q: string, path: string, ancestors: string[], acc: Match[], limit: number): void {
+  if (acc.length >= limit) return;
+  if (Array.isArray(v)) {
+    for (let i = 0; i < v.length; i++) {
+      findMatches(v[i], q, joinIndex(path, i), ancestors.concat([path]), acc, limit);
+      if (acc.length >= limit) return;
+    }
+    return;
+  }
+  if (isObject(v)) {
+    for (const k of Object.keys(v)) {
+      const child = joinKey(path, k);
+      if (k.toLowerCase().indexOf(q) !== -1) {
+        acc.push({ path: child, kind: "key", text: k, literal: JSON.stringify(k), ancestors: ancestors.concat([path]) });
+        if (acc.length >= limit) return;
+      }
+      findMatches(v[k], q, child, ancestors.concat([path]), acc, limit);
+      if (acc.length >= limit) return;
+    }
+    return;
+  }
+  const s = v === null ? "null" : String(v);
+  if (s.toLowerCase().indexOf(q) !== -1) acc.push({ path, kind: "value", text: s, literal: JSON.stringify(v), ancestors });
+}
+
+function Highlight({ text, query, active }: { text: string; query: string; active?: boolean }) {
+  if (!query) return <>{text}</>;
+  const lower = text.toLowerCase();
+  const q = query.toLowerCase();
+  const out: ReactNode[] = [];
+  let i = 0;
+  let idx = lower.indexOf(q, 0);
+  let n = 0;
+  while (idx !== -1) {
+    if (idx > i) out.push(text.slice(i, idx));
+    out.push(<mark className={"mark" + (active ? " active" : "")} key={n++}>{text.slice(idx, idx + q.length)}</mark>);
+    i = idx + q.length;
+    idx = lower.indexOf(q, i);
+  }
+  out.push(text.slice(i));
+  return <>{out}</>;
+}
+
+type NodeProps = {
+  label: string;
+  value: JsonValue;
+  path: string;
+  depth: number;
+  expanded: Set<string>;
+  onToggle: (path: string) => void;
+  query: string;
+  activePath: string;
+  registerRef: (path: string, el: HTMLDivElement | null) => void;
+  onCopyPath: (path: string) => void;
+  onCopyValue: (value: JsonValue) => void;
+};
+
+function JsonNode(props: NodeProps) {
+  const { label, value, path, depth, expanded, onToggle, query, activePath, registerRef, onCopyPath, onCopyValue } = props;
+  // 提示由 onCopyPath / onCopyValue 自己发——它们才知道剪贴板到底写成功没有，
+  // 这里报「已复制」会变成瞎猜（以前就是瞎猜）。
+  const isArr = Array.isArray(value);
+  const isObj = isObject(value);
+  const isContainer = isArr || isObj;
+  const open = isContainer && expanded.has(path);
+  const active = activePath === path;
+  const entries: Array<[string, JsonValue]> = isArr
+    ? (value as JsonValue[]).map((item, i) => [String(i), item] as [string, JsonValue])
+    : isObj
+      ? Object.keys(value as { [key: string]: JsonValue }).map((k) => [k, (value as { [key: string]: JsonValue })[k]] as [string, JsonValue])
+      : [];
+  return (
+    <div>
+      <div className={"row" + (active ? " active" : "")} ref={(el) => { registerRef(path, el); }}>
+        {isContainer ? <button className="twist" onClick={() => onToggle(path)}>{open ? "-" : "+"}</button> : <span className="twist" />}
+        <span className="idx copyable" onDoubleClick={() => onCopyPath(path)}><Highlight text={label} query={query} /></span>
+        <span className="colon">:</span>
+        {isContainer ? (
+          <>
+            <span className="badge">{isArr ? "[" + entries.length + "]" : "{" + entries.length + "}"}</span>
+            {!open && <span className="muted small"> ...</span>}
+          </>
+        ) : (
+          <span className={"val copyable " + valueClass(value)} onDoubleClick={() => onCopyValue(value)}><Highlight text={value === null ? "null" : JSON.stringify(value)} query={query} /></span>
+        )}
+      </div>
+      {open && (
+        <div className="children">
+          {entries.map(([k, item]) => (
+            <JsonNode key={k} label={isArr ? "[" + k + "]" : k} value={item} path={isArr ? joinIndex(path, Number(k)) : joinKey(path, k)} depth={depth + 1} expanded={expanded} onToggle={onToggle} query={query} activePath={activePath} registerRef={registerRef} onCopyPath={onCopyPath} onCopyValue={onCopyValue} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function unescapeUnicode(s: string): string {
+  const B = String.fromCharCode(92);
+  let out = "";
+  let i = 0;
+  while (i < s.length) {
+    if (s.charAt(i) === B && s.charAt(i + 1) === "u") {
+      const hex = s.slice(i + 2, i + 6);
+      if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+        out += String.fromCharCode(parseInt(hex, 16));
+        i += 6;
+        continue;
+      }
+    }
+    out += s.charAt(i);
+    i += 1;
+  }
+  return out;
+}
+
+function escapeText(s: string): string {
+  const B = String.fromCharCode(92);
+  const DQ = String.fromCharCode(34);
+  const NL = String.fromCharCode(10);
+  const CR = String.fromCharCode(13);
+  const TAB = String.fromCharCode(9);
+  let out = "";
+  for (const ch of s) {
+    const c = ch.codePointAt(0) as number;
+    if (ch === B) out += B + B;
+    else if (ch === DQ) out += B + DQ;
+    else if (ch === NL || ch === CR || ch === TAB) out += ch;
+    else if (c < 0x20) out += B + "u" + c.toString(16).padStart(4, "0");
+    else out += ch;
+  }
+  return out;
+}
+
+function unescapeText(s: string): string {
+  const B = String.fromCharCode(92);
+  let out = "";
+  let i = 0;
+  while (i < s.length) {
+    const ch = s.charAt(i);
+    if (ch === B && i + 1 < s.length) {
+      const n = s.charAt(i + 1);
+      if (n === "n") { out += String.fromCharCode(10); i += 2; continue; }
+      if (n === "r") { out += String.fromCharCode(13); i += 2; continue; }
+      if (n === "t") { out += String.fromCharCode(9); i += 2; continue; }
+      if (n === "b") { out += String.fromCharCode(8); i += 2; continue; }
+      if (n === "f") { out += String.fromCharCode(12); i += 2; continue; }
+      if (n === "u") {
+        const hex = s.slice(i + 2, i + 6);
+        if (/^[0-9a-fA-F]{4}$/.test(hex)) { out += String.fromCharCode(parseInt(hex, 16)); i += 6; continue; }
+      }
+      if (n === "x") {
+        const hex = s.slice(i + 2, i + 4);
+        if (/^[0-9a-fA-F]{2}$/.test(hex)) { out += String.fromCharCode(parseInt(hex, 16)); i += 4; continue; }
+      }
+      out += n; i += 2; continue;
+    }
+    out += ch; i += 1;
+  }
+  return out;
+}
+
+function reformatJson(text: string, indent: number, pretty: boolean): string {
+  const BS = String.fromCharCode(92);
+  const DQ = String.fromCharCode(34);
+  const SP = String.fromCharCode(32);
+  const NLc = String.fromCharCode(10);
+  const TAB = String.fromCharCode(9);
+  const CR = String.fromCharCode(13);
+  const LB = String.fromCharCode(123);
+  const RB = String.fromCharCode(125);
+  const LS = String.fromCharCode(91);
+  const RS = String.fromCharCode(93);
+  const COM = String.fromCharCode(44);
+  const COL = String.fromCharCode(58);
+  const unit = pretty ? SP.repeat(indent) : String();
+  const isWs = (c: string) => c === SP || c === TAB || c === NLc || c === CR;
+  let out = String();
+  let depth = 0;
+  let i = 0;
+  const n = text.length;
+  const nl = () => {
+    if (!pretty) return;
+    out += NLc;
+    let k = 0;
+    while (k < depth) { out += unit; k += 1; }
+  };
+  while (i < n) {
+    const ch = text.charAt(i);
+    if (isWs(ch)) { i += 1; continue; }
+    if (ch === DQ) {
+      out += ch;
+      i += 1;
+      while (i < n) {
+        const c = text.charAt(i);
+        out += c;
+        i += 1;
+        if (c === BS) { if (i < n) { out += text.charAt(i); i += 1; } continue; }
+        if (c === DQ) break;
+      }
+      continue;
+    }
+    if (ch === LB || ch === LS) {
+      let j = i + 1;
+      while (j < n && isWs(text.charAt(j))) j += 1;
+      const closing = ch === LB ? RB : RS;
+      if (text.charAt(j) === closing) { out += ch + closing; i = j + 1; continue; }
+      out += ch;
+      depth += 1;
+      nl();
+      i += 1;
+      continue;
+    }
+    if (ch === RB || ch === RS) {
+      depth -= 1;
+      nl();
+      out += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === COM) { out += ch; nl(); i += 1; continue; }
+    if (ch === COL) { out += pretty ? COL + SP : COL; i += 1; continue; }
+    let j = i;
+    while (j < n) {
+      const c = text.charAt(j);
+      if (isWs(c) || c === COM || c === LB || c === RB || c === LS || c === RS || c === COL) break;
+      j += 1;
+    }
+    out += text.slice(i, j);
+    i = j;
+  }
+  return out;
+}
+
+// 每种消息类型一个图标。primary 和 info 同用 ⓘ（Element 也是这样，只有颜色不同）。
+function toastIcon(kind: ToastKind): ReactNode {
+  if (kind === "success") {
+    return <svg className="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M8 12.4l2.6 2.6L16 9.6" /></svg>;
+  }
+  if (kind === "warning") {
+    return <svg className="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 4l9 16H3z" /><path d="M12 10v4.5" /><path d="M12 17.6h.01" /></svg>;
+  }
+  if (kind === "error") {
+    return <svg className="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M15 9l-6 6" /><path d="M9 9l6 6" /></svg>;
+  }
+  return <svg className="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 11v5.5" /><path d="M12 7.6h.01" /></svg>;
+}
+
+function fmtTime(ts: number): string {
+  const d = new Date(ts);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return d.getFullYear() + "/" + p(d.getMonth() + 1) + "/" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+}
+
+// 相对时间要传 now，不能在里面读 Date.now()——否则它只在重渲染时才变，
+// 「刚刚」会一直挂着不动。调用方用一个每 30s 走一格的 now 驱动。
+function fmtRel(ts: number, now: number): string {
+  const d = now - ts;
+  if (d < 60000) return "刚刚";
+  if (d < 3600000) return Math.floor(d / 60000) + " 分钟前";
+  if (d < 86400000) return Math.floor(d / 3600000) + " 小时前";
+  if (d < 30 * 86400000) return Math.floor(d / 86400000) + " 天前";
+  return fmtTime(ts);
+}
+
+function fmtBytes(n: number): string {
+  if (n < 1024) return n + " B";
+  const kb = n / 1024;
+  if (kb < 1024) return kb.toFixed(1).replace(/\.0$/, "") + " KB";
+  return (kb / 1024).toFixed(2).replace(/\.00$/, "") + " MB";
+}
+
+// 历史列表里的正文：取开头一段，把换行和连续空白压成单个空格，
+// 这样多行 JSON 也能一行读完（列表里本来就只给一行，末尾由 CSS 省略号收尾）。
+function histPreview(text: string): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > 160 ? flat.slice(0, 160) + "…" : flat;
+}
+
+export default function JsonTool() {
+  const [raw, setRaw] = useState("");
+  const [indent, setIndent] = useState(2);
+  const [sortMode, setSortMode] = useState<"off" | "asc" | "desc">("off");
+  const [openMenu, setOpenMenu] = useState<"unicode" | "escape" | null>(null);
+  const [menuLocked, setMenuLocked] = useState(false);
+  const toggleMenu = (id: "unicode" | "escape") => {
+    if (openMenu === id && menuLocked) {
+      setOpenMenu(null);
+      setMenuLocked(false);
+    } else {
+      setOpenMenu(id);
+      setMenuLocked(true);
+    }
+  };
+  useEffect(() => {
+    if (!menuLocked) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t || !t.closest(".menu-wrap")) {
+        setOpenMenu(null);
+        setMenuLocked(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [menuLocked]);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set(["$"]));
+  const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [aiEndpoint, setAiEndpoint] = useState("http://120.77.200.18:8787");
+  const [aiKey, setAiKey] = useState("");
+  const [aiOutput, setAiOutput] = useState("");
+  const [aiError, setAiError] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [toasts, setToasts] = useState<{ id: number; text: string; kind: ToastKind; leaving: boolean }[]>([]);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [now, setNow] = useState(() => Date.now());
+  const [rightPanel, setRightPanel] = useState<"none" | "tree" | "ai" | "settings" | "history">("tree");
+  const [sideWidth, setSideWidth] = useState(50);
+  const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const editorRef = useRef<HTMLTextAreaElement | null>(null);
+  const backRef = useRef<HTMLPreElement | null>(null);
+  const marksRef = useRef<HTMLPreElement | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const dragRef = useRef<{ startX: number; startW: number } | null>(null);
+  const histIdRef = useRef(0);
+  const toastIdRef = useRef(0);
+  const toastTimersRef = useRef<Map<number, number>>(new Map());
+  // 退场计时器。键存在 == 这条已经在摘除队列里了，用它代替单独的「已标记」集合。
+  const outTimersRef = useRef<Map<number, number>>(new Map());
+  // 「上一个 / 下一个」长按连发用的三个计时器/长度
+  const navLenRef = useRef(0);
+  const repeatDelayRef = useRef<number | null>(null);
+  const repeatTickRef = useRef<number | null>(null);
+
+  const onSplitDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = { startX: e.clientX, startW: sideWidth };
+  };
+  const onSplitMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const deltaPct = ((d.startX - e.clientX) / window.innerWidth) * 100;
+    setSideWidth(Math.min(80, Math.max(20, d.startW + deltaPct)));
+  };
+  const onSplitUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    dragRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("jsontool.ai");
+      if (saved) {
+        const cfg = JSON.parse(saved) as { endpoint?: string; key?: string };
+        if (cfg.endpoint) setAiEndpoint(cfg.endpoint);
+        if (cfg.key) setAiKey(cfg.key);
+      }
+    } catch {
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("jsontool.ai", JSON.stringify({ endpoint: aiEndpoint, key: aiKey }));
+    } catch {
+    }
+  }, [aiEndpoint, aiKey]);
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(HIST_KEY);
+      if (!saved) return;
+      const arr = JSON.parse(saved) as HistoryEntry[];
+      if (!Array.isArray(arr)) return;
+      const clean = arr
+        .filter((h) => h && typeof h.text === "string" && typeof h.ts === "number")
+        .map((h, i) => ({ id: typeof h.id === "number" && h.id > 0 ? h.id : i + 1, ts: h.ts, text: h.text }));
+      setHistory(clean);
+      histIdRef.current = clean.reduce((m, h) => Math.max(m, h.id), 0);
+    } catch {
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(HIST_KEY, JSON.stringify(history));
+    } catch {
+    }
+  }, [history]);
+
+  const parsed = useMemo(() => {
+    const trimmed = raw.trim();
+    if (!trimmed) return { value: null as JsonValue, error: "", empty: true };
+    try {
+      return { value: JSON.parse(trimmed) as JsonValue, error: "", empty: false };
+    } catch (err) {
+      return { value: null as JsonValue, error: err instanceof Error ? err.message : String(err), empty: false };
+    }
+  }, [raw]);
+
+  const tooBig = raw.length > 5 * 1024 * 1024;
+  const ready = !parsed.empty && !parsed.error;
+  const info = useMemo(() => (ready ? computeStats(parsed.value) : { nodes: 0, depth: 0 }), [ready, parsed.value]);
+
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q || !ready) return [] as Match[];
+    const acc: Match[] = [];
+    findMatches(parsed.value, q, "$", [], acc, 500);
+    return acc;
+  }, [query, ready, parsed.value]);
+
+  const textMatches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [] as number[];
+    const lower = raw.toLowerCase();
+    const out: number[] = [];
+    let idx = lower.indexOf(q, 0);
+    while (idx !== -1 && out.length < 500) {
+      out.push(idx);
+      idx = lower.indexOf(q, idx + q.length);
+    }
+    return out;
+  }, [query, raw]);
+
+  const nav = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const items: Array<{ tree: Match | null; offset: number; len: number }> = [];
+    let cursor = 0;
+    for (const m of matches) {
+      let start = raw.indexOf(m.literal, cursor);
+      if (start === -1) start = raw.indexOf(m.literal);
+      if (start !== -1) cursor = start + m.literal.length;
+      if (start === -1) {
+        items.push({ tree: m, offset: -1, len: q.length });
+        continue;
+      }
+      const seg = raw.slice(start, start + m.literal.length).toLowerCase();
+      let inner = seg.indexOf(q, 0);
+      if (inner === -1) {
+        items.push({ tree: m, offset: start, len: q.length });
+        continue;
+      }
+      while (inner !== -1) {
+        items.push({ tree: m, offset: start + inner, len: q.length });
+        inner = seg.indexOf(q, inner + q.length);
+      }
+    }
+    const covered = (o: number) => items.some((it) => it.offset !== -1 && o >= it.offset && o < it.offset + it.len);
+    for (const o of textMatches) {
+      if (covered(o)) continue;
+      items.push({ tree: null, offset: o, len: q.length });
+    }
+    items.sort((a, b) => {
+      const ao = a.offset === -1 ? Number.MAX_SAFE_INTEGER : a.offset;
+      const bo = b.offset === -1 ? Number.MAX_SAFE_INTEGER : b.offset;
+      return ao - bo;
+    });
+    return items;
+  }, [matches, textMatches, raw, query]);
+
+  const qlen = query.trim().length;
+  const activeOffset = nav.length ? nav[Math.min(activeIndex, nav.length - 1)].offset : -1;
+  // 只产出搜索命中的 <mark>，不掺任何选区状态——选区交给 textarea 原生绘制（零 JS、不触发重渲染）。
+  // 这一层渲染在 textarea 之上，所以黄色标记盖在蓝色选区之上，不会被压暗。
+  const highlightRaw = useMemo(() => {
+    if (!qlen) return raw;
+    const nodes: ReactNode[] = [];
+    let i = 0;
+    for (const o of textMatches) {
+      if (o > i) nodes.push(raw.slice(i, o));
+      nodes.push(<mark className={"mark" + (o === activeOffset ? " active" : "")} key={o}>{raw.slice(o, o + qlen)}</mark>);
+      i = o + qlen;
+    }
+    nodes.push(raw.slice(i));
+    return nodes;
+  }, [raw, textMatches, qlen, activeOffset]);
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [query]);
+
+  useEffect(() => {
+    if (nav.length === 0) return;
+    const item = nav[Math.min(activeIndex, nav.length - 1)];
+    if (!item.tree) return;
+    const target = item.tree;
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.add("$");
+      for (const a of target.ancestors) next.add(a);
+      return next;
+    });
+  }, [activeIndex, nav]);
+
+  useEffect(() => {
+    if (nav.length === 0) return;
+    const item = nav[Math.min(activeIndex, nav.length - 1)];
+    const timer = window.setTimeout(() => {
+      if (item.tree) {
+        const el = rowRefs.current.get(item.tree.path);
+        if (el) el.scrollIntoView({ block: "center" });
+      }
+      // 搜索只滚动，**不选中、不夺焦点**。
+      // 以前这里会 setSelectionRange + focus，于是每次点「下一个」都在编辑器里留下一块蓝色选区、
+      // 把光标塞进 textarea 并抢走搜索框的焦点——用户看到的「蓝色光标」就是它，而且位置还常和预期对不上。
+      // 现在：当前命中项只靠 .mark.active 那圈描边标识；蓝色只在用户自己拖选时才由浏览器原生绘制。
+      const ed = editorRef.current;
+      // 命中标记渲染在 .editor-marks 层（不是 .editor-back），必须去那一层找
+      const mk = marksRef.current;
+      if (ed && mk) {
+        const mark = mk.querySelector(".mark.active");
+        if (mark instanceof HTMLElement) {
+          ed.scrollTop = Math.max(0, mark.offsetTop - ed.clientHeight / 2);
+        }
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [activeIndex, nav, expanded]);
+
+  // ---- 消息提示（全项目通用）----
+  // 所有「做完了给个回音」的反馈一律走 notify()，不要再给单个功能写临时状态。
+  // 原来散着的四套（copied / saved / restoredId / JsonNode 的 flash）已经全并进来了。
+  // 只做「标记为退场」这一件纯状态变更。真正的摘除由下面那个 effect 统一负责，
+  // 于是「到期」「点 ×」「被上限挤掉」三条路走的是同一套下落动画。
+  const dropToast = useCallback((id: number) => {
+    const timer = toastTimersRef.current.get(id);
+    if (timer !== undefined) { window.clearTimeout(timer); toastTimersRef.current.delete(id); }
+    setToasts((prev) => {
+      const hit = prev.find((t) => t.id === id);
+      if (!hit || hit.leaving) return prev; // 已经在退场了，别重复触发
+      return prev.map((t) => (t.id === id ? { ...t, leaving: true } : t));
+    });
+  }, []);
+
+  // 退场动画播完就摘掉。计时器记在 ref 里、不 return cleanup：
+  // effect 的 cleanup 在 toasts 每次变化时都会跑，而「来了一条新消息」正是一次变化，
+  // 那样会把还没到点的摘除给取消掉，消息就永远留在屏幕上了。
+  useEffect(() => {
+    toasts.forEach((t) => {
+      if (!t.leaving || outTimersRef.current.has(t.id)) return;
+      outTimersRef.current.set(t.id, window.setTimeout(() => {
+        outTimersRef.current.delete(t.id);
+        setToasts((prev) => prev.filter((x) => x.id !== t.id));
+      }, TOAST_OUT_MS));
+    });
+  }, [toasts]);
+
+  // id 和计时器都在 setState updater **之外**创建：StrictMode 会双调 updater，
+  // 把副作用写进去就会重复计时（本项目在 pushHistory 上踩过同一个坑）。
+  // 每次调用都新增一条，**不做任何去重**：同一条消息连点多次就叠多条——
+  // 点了几下就该有几下的反馈。之前这里会把同文本的消息合并成一条并把计时器延后，
+  // 结果连点同一个按钮屏幕上只有一条，看着像没反应。
+  const notify = useCallback((text: string, kind: ToastKind = "primary") => {
+    toastIdRef.current += 1;
+    const id = toastIdRef.current;
+    setToasts((prev) => {
+      const next = [...prev, { id, text, kind, leaving: false }];
+      // 活跃条数超过上限时，把最旧的活跃条目标成退场，让它播完下落动画再被摘掉。
+      // 以前这里是 slice(-TOAST_MAX)：直接把最旧的从数组里切掉，元素瞬间消失、
+      // 没有任何下落动作——正是「消息满了之后，老消息应该有个下落动作」要修的那点。
+      // 只标记、不摘除，所以这里依旧是纯函数，可以安全地被 StrictMode 双调。
+      let keep = TOAST_MAX;
+      for (let i = next.length - 1; i >= 0; i -= 1) {
+        if (next[i].leaving) continue; // 已在退场的条目不算名额
+        if (keep > 0) { keep -= 1; continue; }
+        next[i] = { ...next[i], leaving: true };
+      }
+      return next;
+    });
+    toastTimersRef.current.set(id, window.setTimeout(() => dropToast(id), TOAST_MS));
+  }, [dropToast]);
+
+  useEffect(() => () => {
+    toastTimersRef.current.forEach((t) => window.clearTimeout(t));
+    toastTimersRef.current.clear();
+    outTimersRef.current.forEach((t) => window.clearTimeout(t));
+    outTimersRef.current.clear();
+  }, []);
+
+  // 记一条历史。**只有点「保存」才会走到这里**——不做任何自动记录。
+  // 用户点保存就一定留下一条：**不去重**（内容相同也照样新增），否则「点了保存却没反应」。
+  // 裁剪只作用于更旧的条目，最新这条永远保留；localStorage 配额只有几 MB，
+  // 不裁的话 setItem 会抛 QuotaExceededError，被下面的 catch 吞掉，看起来就是「历史莫名其妙不存了」。
+  const pushHistory = useCallback((text: string) => {
+    if (!text.trim()) return;
+    setHistory((prev) => {
+      histIdRef.current += 1;
+      const entry: HistoryEntry = { id: histIdRef.current, ts: Date.now(), text };
+      const kept: HistoryEntry[] = [entry];
+      let chars = entry.text.length;
+      for (const h of prev) {
+        chars += h.text.length;
+        if (kept.length >= HIST_MAX || chars > HIST_MAX_CHARS) break;
+        kept.push(h);
+      }
+      return kept;
+    });
+  }, []);
+
+  // 「刚刚」要能自己走成「1 分钟前」。只在历史面板开着时每 30s 走一格——
+  // 关掉就不跳，省得为了一个看不见的标签一直重渲染整个组件。
+  useEffect(() => {
+    if (rightPanel !== "history") return;
+    setNow(Date.now());
+    const t = window.setInterval(() => setNow(Date.now()), 30000);
+    return () => window.clearInterval(t);
+  }, [rightPanel]);
+
+  // 点条目 = 把存下来的 JSON 灌回输入框（历史本身只读，不提供编辑）。
+  const restoreHistory = useCallback((h: HistoryEntry) => {
+    setRaw(h.text);
+    notify("已恢复", "success");
+  }, [notify]);
+  const removeHistory = useCallback((id: number) => { setHistory((prev) => prev.filter((h) => h.id !== id)); }, []);
+  const clearHistory = useCallback(() => { setHistory([]); }, []);
+
+  // 「上一个 / 下一个」长按连发：按下立刻走一步，停 380ms 后每 60ms 连发，松开或移出即停。
+  // onClick 里只在 event.detail === 0 时走一步（键盘激活或脚本触发）——指针点击的 detail >= 1，
+  // 那一步已经在 pointerdown 里走过了，不区分的话点一下会跳两格。
+  const stopRepeat = useCallback(() => {
+    if (repeatDelayRef.current !== null) { window.clearTimeout(repeatDelayRef.current); repeatDelayRef.current = null; }
+    if (repeatTickRef.current !== null) { window.clearInterval(repeatTickRef.current); repeatTickRef.current = null; }
+  }, []);
+
+  const stepNav = useCallback((dir: number) => {
+    setActiveIndex((i) => (navLenRef.current ? (i + dir + navLenRef.current) % navLenRef.current : 0));
+  }, []);
+
+  const startRepeat = useCallback((dir: number) => {
+    stopRepeat();
+    stepNav(dir);
+    repeatDelayRef.current = window.setTimeout(() => {
+      repeatTickRef.current = window.setInterval(() => stepNav(dir), 60);
+    }, 380);
+  }, [stepNav, stopRepeat]);
+
+  useEffect(() => { navLenRef.current = nav.length; }, [nav.length]);
+  useEffect(() => stopRepeat, [stopRepeat]);
+
+  const onToggle = useCallback((path: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
+
+  const expandAll = useCallback(() => {
+    if (!ready || tooBig) return;
+    const acc = new Set<string>();
+    collectPaths(parsed.value, "$", acc);
+    setExpanded(acc);
+  }, [ready, tooBig, parsed.value]);
+
+  const collapseAll = useCallback(() => setExpanded(new Set(["$"])), []);
+
+  const registerRef = useCallback((path: string, el: HTMLDivElement | null) => {
+    if (el) rowRefs.current.set(path, el);
+    else rowRefs.current.delete(path);
+  }, []);
+
+  // 成功和失败都要说一声。以前 catch 是空的：剪贴板被浏览器拒绝时（非安全上下文、无权限等）
+  // 气泡照样报「已复制」，等于在骗人——这是 error 型唯一的真实用武之地。
+  const copy = useCallback((text: string, ok: string) => {
+    navigator.clipboard.writeText(text)
+      .then(() => notify(ok, "success"))
+      .catch(() => notify("复制失败：浏览器拒绝了剪贴板访问", "error"));
+  }, [notify]);
+
+  const onCopyPath = useCallback((path: string) => { copy(path, "已复制路径"); }, [copy]);
+  const onCopyValue = useCallback((value: JsonValue) => {
+    copy(typeof value === "string" ? value : JSON.stringify(value, null, indent), "已复制值");
+  }, [copy, indent]);
+
+  // 格式化/压缩之后给个回音：内容本来就已经是那个样子时，屏幕上不会有任何变化，
+  // 没有提示就会像是按钮坏了。
+  const doFormat = () => {
+    if (!raw.trim()) return;
+    if (sortMode !== "off" && !ready) return;
+    setRaw(sortMode !== "off"
+      ? JSON.stringify(deepSort(parsed.value, sortMode === "desc"), null, indent)
+      : reformatJson(raw, indent, true));
+    notify("已格式化");
+  };
+  const doMinify = () => {
+    if (!raw.trim()) return;
+    if (sortMode !== "off" && !ready) return;
+    setRaw(sortMode !== "off"
+      ? JSON.stringify(deepSort(parsed.value, sortMode === "desc"))
+      : reformatJson(raw, indent, false));
+    notify("已压缩");
+  };
+  const doClear = () => { setRaw(""); setQuery(""); setAiOutput(""); setAiError(""); notify("已清空", "warning"); };
+  // 示例 / Unicode / 转义 / 全展开全折叠 / 切面板都不加提示：
+  // 它们的结果就在眼前（输入框或树立刻变了），再加一条气泡只是噪音。
+  const doSample = () => { setRaw(SAMPLE); };
+  // 保存 = 把当前内容记进历史。这是历史唯一的入口，没有自动记录。
+  const doSave = () => {
+    if (!raw.trim()) return;
+    pushHistory(raw);
+    notify("已保存到历史", "success");
+  };
+  const doCopy = () => { copy(raw, "已复制"); };
+  const doDownload = () => {
+    if (!raw) return;
+    const blob = new Blob([raw], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "data.json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+    notify("已下载 data.json");
+  };
+
+  const onDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    file.text().then((text) => { setRaw(text); notify("已载入 " + file.name, "info"); }).catch(() => {});
+  };
+
+  const onPickFile = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files && e.target.files[0];
+    if (file) file.text().then((text) => { setRaw(text); notify("已载入 " + file.name, "info"); }).catch(() => {});
+    e.target.value = "";
+  };
+
+
+  const organize = async () => {
+    if (!ready || aiBusy || tooBig) return;
+    setAiBusy(true);
+    setAiOutput("");
+    setAiError("");
+    try {
+      const res = await fetch("/api/organize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endpoint: aiEndpoint, key: aiKey, json: JSON.stringify(parsed.value, null, 2) }),
+      });
+      if (!res.ok || !res.body) {
+        const msg = await res.text();
+        throw new Error(msg || "AI 服务错误");
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let acc = "";
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        buf += decoder.decode(chunk.value, { stream: true });
+        let sep = buf.indexOf(NL2);
+        while (sep !== -1) {
+          const frame = buf.slice(0, sep);
+          buf = buf.slice(sep + 2);
+          for (const line of frame.split(NL1)) {
+            if (!line.startsWith("data:")) continue;
+            const data = line.slice(5).trim();
+            if (!data) continue;
+            const obj = JSON.parse(data) as { t: string; v?: string };
+            if (obj.t === "delta" && obj.v) {
+              acc += obj.v;
+              setAiOutput(acc);
+            } else if (obj.t === "done" && obj.v) {
+              acc = obj.v;
+              setAiOutput(obj.v);
+            } else if (obj.t === "error" && obj.v) {
+              setAiError(obj.v);
+            }
+          }
+          sep = buf.indexOf(NL2);
+        }
+      }
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const activeItem = nav.length ? nav[Math.min(activeIndex, nav.length - 1)] : null;
+  const activeMatch = activeItem && activeItem.tree ? activeItem.tree : null;
+  const queryLower = query.trim().toLowerCase();
+
+  return (
+    <div className="app" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
+      <div className="topbar">
+        <div className="brand">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" role="img" aria-label="JSON 工具"><path d="M8 3H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1" /><path d="M16 3h1a2 2 0 0 1 2 2v4a2 2 0 0 0 2 2 2 2 0 0 0-2 2v4a2 2 0 0 1-2 2h-1" /></svg>
+          <span className="brand-name">Jsontool</span>
+        </div>
+
+        <div className="searchbar">
+          <div className="search-pill">
+            <input
+              className="search-input"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); setActiveIndex((i) => (nav.length ? (i + (e.shiftKey ? nav.length - 1 : 1)) % nav.length : 0)); } else if (e.key === "Escape") { setQuery(""); } }}
+              placeholder="搜索"
+            />
+            <span className="search-count">{nav.length ? Math.min(activeIndex, nav.length - 1) + 1 + "/" + nav.length : "0/0"}</span>
+            <span className="search-sep" />
+            <button className="search-icon" onPointerDown={() => startRepeat(-1)} onPointerUp={stopRepeat} onPointerLeave={stopRepeat} onPointerCancel={stopRepeat} onClick={(e) => { if (e.detail === 0) stepNav(-1); }} aria-label="上一个" data-tip="上一个">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 15l-6-6-6 6" /></svg>
+            </button>
+            <button className="search-icon" onPointerDown={() => startRepeat(1)} onPointerUp={stopRepeat} onPointerLeave={stopRepeat} onPointerCancel={stopRepeat} onClick={(e) => { if (e.detail === 0) stepNav(1); }} aria-label="下一个" data-tip="下一个">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+            </button>
+            <button className="search-icon" onClick={() => setQuery("")} aria-label="清除" data-tip="清除">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+        </div>
+        <span className="muted small topbar-stats">{ready ? "节点 " + info.nodes + " · 深度 " + info.depth + " · " + raw.length + " 字节" : parsed.error ? "解析错误" : "等待输入"}</span>
+      </div>
+      <div className="main">
+        <div className="pane">
+          <div className="pane-head">
+            <div className="actions">
+              <button className="tool-btn" onClick={doFormat}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" /></svg>
+                格式化
+              </button>
+              <button className="tool-btn" onClick={doMinify}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" /></svg>
+                压缩
+              </button>
+              <button className="tool-btn" onClick={doSample}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2" /><polyline points="2 17 12 22 22 17" /><polyline points="2 12 12 17 22 12" /></svg>
+                示例
+              </button>
+              <div className="menu-wrap" onMouseEnter={() => { if (!menuLocked) setOpenMenu("unicode"); }} onMouseLeave={() => { if (!menuLocked) setOpenMenu(null); }}>
+                <button className="tool-btn" onClick={() => toggleMenu("unicode")}>Unicode<span className="caret" /></button>
+                {openMenu === "unicode" && (
+                  <div className="menu">
+                    <button className="menu-item" onClick={() => { setRaw(escapeUnicode(raw)); setOpenMenu(null); setMenuLocked(false); }}>中文转 Unicode</button>
+                    <button className="menu-item" onClick={() => { setRaw(unescapeUnicode(raw)); setOpenMenu(null); setMenuLocked(false); }}>Unicode 转中文</button>
+                  </div>
+                )}
+              </div>
+              <div className="menu-wrap" onMouseEnter={() => { if (!menuLocked) setOpenMenu("escape"); }} onMouseLeave={() => { if (!menuLocked) setOpenMenu(null); }}>
+                <button className="tool-btn" onClick={() => toggleMenu("escape")}>转义<span className="caret" /></button>
+                {openMenu === "escape" && (
+                  <div className="menu">
+                    <button className="menu-item" onClick={() => { setRaw(escapeText(raw)); setOpenMenu(null); setMenuLocked(false); }}>添加 {BS} 转义</button>
+                    <button className="menu-item" onClick={() => { setRaw(unescapeText(raw)); setOpenMenu(null); setMenuLocked(false); }}>去除 {BS} 转义</button>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="tool-icons">
+              <button className="icon-btn" onClick={doSave} data-tip="保存到历史" aria-label="保存到历史"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg></button>
+              <button className="icon-btn" onClick={() => fileRef.current?.click()} data-tip="上传" aria-label="上传"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg></button>
+              <input ref={fileRef} type="file" accept=".json,application/json" style={{ display: "none" }} onChange={onPickFile} />
+              <button className="icon-btn" onClick={doDownload} data-tip="下载" aria-label="下载"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg></button>
+              <button className="icon-btn" onClick={doCopy} data-tip="复制" aria-label="复制"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              <button className="icon-btn" onClick={doClear} data-tip="清空" aria-label="清空"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg></button>
+            </div>
+          </div>
+          <div className="editor-wrap">
+            <pre className="editor-back" ref={backRef} aria-hidden="true">{raw}</pre>
+            <textarea ref={editorRef} className="editor-front" value={raw} onChange={(e) => setRaw(e.target.value)} onScroll={(e) => { const st = e.currentTarget.scrollTop; const sl = e.currentTarget.scrollLeft; const bk = backRef.current; if (bk) { bk.scrollTop = st; bk.scrollLeft = sl; } const mk = marksRef.current; if (mk) { mk.scrollTop = st; mk.scrollLeft = sl; } }} spellCheck={false} placeholder="粘贴 JSON，或拖入 .json 文件" />
+            <pre className="editor-marks" ref={marksRef} aria-hidden="true">{highlightRaw}</pre>
+          </div>
+
+          {parsed.error && <div className="err">{parsed.error}</div>}
+          {tooBig && <div className="err">超过 5MB：仅支持格式化与压缩，树形视图与 AI 已禁用</div>}
+        </div>
+        {rightPanel !== "none" && (
+          <>
+            <div className="splitter" onPointerDown={onSplitDown} onPointerMove={onSplitMove} onPointerUp={onSplitUp} onPointerCancel={onSplitUp} />
+            <div className="side-body" style={{ width: sideWidth + "%" }}>
+            {rightPanel === "tree" ? (
+              <div className="pane">
+                <div className="pane-head">
+                  <span>树形视图</span>
+                  <div className="tree-actions">
+                    <button className="tool-btn" onClick={expandAll}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="4" /><path d="M12 8v8" /><path d="M8 12h8" /></svg>
+                      全展开
+                    </button>
+                    <button className="tool-btn" onClick={collapseAll}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="4" /><path d="M8 12h8" /></svg>
+                      全折叠
+                    </button>
+                  </div>
+                </div>
+                <div className="tree">
+                  {ready && !tooBig && <JsonNode label="$" value={parsed.value} path="$" depth={0} expanded={expanded} onToggle={onToggle} query={queryLower} activePath={activeMatch ? activeMatch.path : ""} registerRef={registerRef} onCopyPath={onCopyPath} onCopyValue={onCopyValue} />}
+                  {ready && tooBig && <div className="pad muted">数据超过 5MB，未渲染树</div>}
+                  {!ready && !parsed.empty && <div className="pad muted">修复 JSON 后显示结构</div>}
+                  {parsed.empty && <div className="pad muted">左侧输入 JSON 后显示结构 · 双击键名复制路径，双击值复制内容</div>}
+                </div>
+              </div>
+            ) : rightPanel === "ai" ? (
+              <div className="ai">
+                <div className="pane-head">
+                  <span>AI 整理</span>
+                  <button className="tool-btn ai-run" onClick={organize}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" /><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" /></svg>
+                    {aiBusy ? "分析中" : "开始分析"}
+                  </button>
+                </div>
+                {aiError && <div className="err inline pad">{aiError}</div>}
+                <pre className="ai-output">{aiOutput || "尚未分析"}</pre>
+              </div>
+            ) : rightPanel === "history" ? (
+              <div className="pane">
+                <div className="pane-head">
+                  <span>历史记录（{history.length}条）</span>
+                  <button className="tool-btn hist-clear" onClick={clearHistory}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /></svg>清空历史</button>
+                </div>
+                <div className="tree">
+                  {history.length === 0 && (
+                    <div className="pad muted hist-empty">
+                      <span>还没有历史记录 · 在上方点「保存到历史」把当前内容记到这里</span>
+                      <span className="small">最多保留 {HIST_MAX} 条、总计 {fmtBytes(HIST_MAX_CHARS)}，超出时最旧的会被丢弃</span>
+                    </div>
+                  )}
+                  {history.map((h) => (
+                    <div className="hist-row" key={h.id}>
+                      <button className="hist-main" onClick={() => restoreHistory(h)}>
+                        <span className="hist-line1">
+                          <span className="hist-rel">{fmtRel(h.ts, now)}</span>
+                          <span className="hist-meta">{fmtTime(h.ts)} · {fmtBytes(h.text.length)}</span>
+                        </span>
+                        <span className="hist-prev">{histPreview(h.text)}</span>
+                      </button>
+                      <button className="hist-del" onClick={() => removeHistory(h.id)} data-tip="删除" aria-label="删除">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /></svg>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="pane">
+                <div className="pane-head">
+                  <span>设置</span>
+                </div>
+                <div className="settings">
+                  <label className="field"><span>缩进</span>
+                    <select className="input" value={indent} onChange={(e) => setIndent(Number(e.target.value))}>
+                      <option value={2}>2 空格</option>
+                      <option value={4}>4 空格</option>
+                    </select>
+                  </label>
+                  <label className="field"><span>Key 排序</span>
+                    <select className="input" value={sortMode} onChange={(e) => setSortMode(e.target.value as "off" | "asc" | "desc")}>
+                      <option value="off">关闭</option>
+                      <option value="asc">升序</option>
+                      <option value="desc">降序</option>
+                    </select>
+                  </label>
+
+                  <label className="field field-wide"><span>AI 服务地址</span><input className="input" value={aiEndpoint} onChange={(e) => setAiEndpoint(e.target.value)} /></label>
+                  <label className="field field-wide"><span>访问密钥（存本机 localStorage，经服务端转发）</span><input className="input" type="password" value={aiKey} onChange={(e) => setAiKey(e.target.value)} /></label>
+                </div>
+              </div>
+            )}
+            </div>
+          </>
+        )}
+        <div className="activity">
+          <button className={"act" + (rightPanel === "tree" ? " on" : "")} data-tip="树形视图" aria-label="树形视图" onClick={() => setRightPanel((v) => (v === "tree" ? "none" : "tree"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 6h-8" /><path d="M21 12h-8" /><path d="M21 18h-8" /><path d="M3 6v4c0 1.1.9 2 2 2h3" /><path d="M3 10v6c0 1.1.9 2 2 2h3" /></svg></button>
+          <button className={"act" + (rightPanel === "history" ? " on" : "")} data-tip="历史记录" aria-label="历史记录" onClick={() => setRightPanel((v) => (v === "history" ? "none" : "history"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" /></svg></button>
+          <button className={"act" + (rightPanel === "ai" ? " on" : "")} data-tip="AI 整理" aria-label="AI 整理" onClick={() => setRightPanel((v) => (v === "ai" ? "none" : "ai"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg></button>
+          <button className={"act" + (rightPanel === "settings" ? " on" : "")} data-tip="设置" aria-label="设置" onClick={() => setRightPanel((v) => (v === "settings" ? "none" : "settings"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+        </div>
+      </div>
+      {/* 消息提示：放在 .app 最后一个子元素即可——position:fixed 脱离文档流，
+          不会参与 .app 的 flex 布局；也无需 portal 或改 page.tsx。 */}
+      <div className="toasts" role="status" aria-live="polite">
+        {/* 只有点 × 才关得掉，点气泡正文不做任何事（对齐 ElMessage 的行为）。
+            × 上也不挂 data-tip：气泡贴在视口右下角，提示框会被视口边缘裁掉。 */}
+        {toasts.map((t) => (
+          <div className={"toast " + t.kind + (t.leaving ? " leaving" : "")} key={t.id}>
+            {toastIcon(t.kind)}
+            <span className="toast-text">{t.text}</span>
+            <button className="toast-x" onClick={() => dropToast(t.id)} aria-label="关闭">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

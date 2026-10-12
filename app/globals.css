@@ -1,0 +1,223 @@
+:root {
+  color-scheme: dark;
+  --bg: #0f1116;
+  --panel: #141822;
+  --panel2: #1a1f2b;
+  --border: #262c3a;
+  --fg: #e6e9f0;
+  --muted: #8b93a7;
+  --accent: #4c8dff;
+  --str: #9ae6a0;
+  --num: #f0b46b;
+  --bool: #c792ea;
+  --err: #ff6b6b;
+  --deep: #0a0c11;
+  --line: #333b4d;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+button { font: inherit; }
+* { scrollbar-width: thin; scrollbar-color: #39415a transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: #39415a; border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:hover { background: #4a5474; background-clip: padding-box; }
+*::-webkit-scrollbar-corner { background: transparent; }
+
+.app { display: flex; flex-direction: column; height: 100vh; }
+.topbar { position: relative; display: flex; align-items: center; gap: 8px; padding: 5px 14px; min-height: 54px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 8px; flex: none; margin-right: 4px; color: var(--accent); }
+.brand-name { color: var(--fg); font-size: 16px; font-weight: 600; letter-spacing: .3px; }
+.actions { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+.settings { display: flex; gap: 16px; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--panel2); flex-wrap: wrap; }
+.pane > .settings { flex-direction: row; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: 10px 16px; padding: 12px; border-bottom: 0; flex: 1; min-height: 0; overflow: auto; }
+.pane > .settings .field { flex-direction: row; align-items: center; gap: 6px; min-width: 0; flex: 0 0 auto; }
+.pane > .settings .field span { white-space: nowrap; }
+.pane > .settings .field input.input, .pane > .settings .field select.input { min-width: 150px; }
+.pane > .settings .field.field-wide { flex: 1 1 100%; }
+.pane > .settings .field.field-wide input.input { flex: 1; min-width: 0; }
+.pane > .settings .field input[type="checkbox"] { align-self: flex-start; width: 18px; height: 18px; }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 260px; flex: 1; }
+.field span { color: var(--muted); font-size: 13px; }
+.input { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); padding: 4px 8px; font: inherit; }
+.input:focus { outline: none; border-color: var(--accent); }
+.main { display: flex; flex: 1; min-height: 0; gap: 1px; padding: 3px; background: var(--panel); }
+.main > .pane { flex: 1; min-width: 0; }
+.splitter { width: 4px; flex: none; cursor: col-resize; background: transparent; border-radius: 2px; }
+.splitter:hover, .splitter:active { background: var(--accent); }
+.activity { width: 46px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.side-body > .pane, .side-body > .ai { border-radius: 8px 0 0 8px; border-right: 0; }
+.side-body + .activity { margin-left: -1px; border: 1px solid var(--line); border-left: 0; border-radius: 0 8px 8px 0; }
+.act { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: none; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer; font-size: 15px; }
+.act:hover { color: var(--fg); background: rgba(76, 141, 255, .08); }
+.act.on { color: var(--accent); background: rgba(76, 141, 255, .16); }
+.act:active { color: var(--accent); background: rgba(76, 141, 255, .16); }
+.side-body { flex: none; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.side-body > .pane { flex: 1; }
+.side-body > .ai { flex: 1; }
+.pane { display: flex; flex-direction: column; background: var(--bg); min-height: 0; min-width: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.pane-head { position: relative; z-index: 3; display: flex; align-items: center; gap: 8px; padding: 0 10px; min-height: 42px; border-bottom: 1px solid var(--line); background: var(--panel2); flex-wrap: wrap; }
+.pane-head > span:first-child { font-weight: 600; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.pad { padding: 12px; }
+.editor-wrap { position: relative; flex: 1; min-height: 0; }
+/* 编辑器三层（自下而上）：editor-back 显示正文 → editor-marks 只画搜索命中的黄色标记 →
+   editor-front 是真正可编辑的 textarea（文字透明，只负责光标、选区、输入）。
+   注意绘制顺序与 DOM 顺序**相反**，靠 z-index 显式指定；只调 JSX 顺序不会有任何效果。
+   选区在最上：蓝色选区是一条连续不断的带子，匹配词只是把黄块垫在它底下，因此会被压暗成土黄。
+   这是明确取舍的结果，不是漏改——理由见 CLAUDE.md。选区由浏览器原生绘制，不经过 React。 */
+/* scrollbar-gutter: stable 是这三层能对齐的**前提**，不是可选优化。
+   textarea 是 overflow:auto：文档一长它就弹出竖向滚动条，内容区立刻窄掉一个滚动条的宽度
+   （实测 10px），于是同样的文字在下面两个 <pre> 里换行到第 80 列、在 textarea 里换到第 78 列。
+   换行点一错，从那一行往下光标和蓝色选区全部错位——而黄色标记是对的，因为它出自 <pre>。
+   加上 scrollbar-gutter 后三层**永远**预留同样的滚动条槽位，有没有滚动条都不再改变内容宽度。 */
+.editor-back, .editor-front, .editor-marks { position: absolute; inset: 0; margin: 0; border: 0; padding: 10px; font: inherit; line-height: inherit; white-space: pre-wrap; word-break: break-word; scrollbar-gutter: stable; }
+.editor-back { z-index: 0; background: var(--bg); color: var(--fg); overflow: hidden; pointer-events: none; }
+.editor-front { z-index: 2; background: transparent; color: transparent; caret-color: var(--fg); resize: none; outline: none; overflow: auto; }
+.editor-front::placeholder { color: var(--muted); }
+.editor-front::selection { background: rgba(76, 141, 255, .38); }
+.editor-marks { z-index: 1; background: transparent; color: transparent; overflow: hidden; pointer-events: none; }
+.err { color: var(--err); padding: 6px 10px; border-top: 1px solid var(--border); white-space: pre-wrap; word-break: break-all; }
+.err.inline { border: 0; padding: 0; }
+.tree { flex: 1; overflow: auto; padding: 8px 4px; min-height: 0; }
+.row { display: flex; align-items: baseline; gap: 4px; white-space: pre; padding: 1px 6px; border-radius: 4px; }
+.children { margin-left: 14px; padding-left: 8px; border-left: 1px solid rgba(120, 150, 200, .25); }
+.row:hover { background: rgba(76, 141, 255, .08); }
+.row.active { background: rgba(76, 141, 255, .18); }
+/* 图标+文字按钮。原来限定在 .actions（左侧工具栏）内，现在树视图标题栏和历史的清空也用同一个，
+   所以放开成全局类——在 .actions 里效果完全一样。 */
+/* 静息色一律用 --muted（白中透灰），和 .act / .icon-btn / .search-icon 保持一致；
+   悬停时由下面的全局按钮规则统一提到 --fg。别再给某个按钮单独上 --fg 或 --accent，
+   那样就又出现「同一个界面里按钮颜色不统一」的问题。 */
+.tool-btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; background: none; border: 1px solid transparent; border-radius: 8px; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.tool-btn svg { flex: none; }
+/* 开始分析按钮推到 AI 面板标题栏最右（同 .hist-clear 的做法） */
+.ai-run { margin-left: auto; }
+.actions .menu-wrap { position: relative; display: inline-flex; }
+.actions .caret { display: inline-block; width: 0; height: 0; margin-left: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 4px solid currentColor; vertical-align: middle; }
+.actions .menu::before { content: ""; position: absolute; top: -8px; left: 0; right: 0; height: 8px; }
+.actions .menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; min-width: 160px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,.45); display: flex; flex-direction: column; }
+.actions .menu-item { text-align: left; background: none; border: 0; color: var(--muted); padding: 7px 10px; border-radius: 6px; cursor: pointer; white-space: nowrap; font: inherit; }
+.tool-icons { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.icon-btn { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: none; border: 1px solid transparent; border-radius: 8px; color: var(--muted); cursor: pointer; }
+/* 全局按钮交互规范：**静息 = --muted（白中透灰）**；悬停 = --fg + 8% 蓝底；按下 = 强调色 + 16% 蓝底。
+   新增按钮一律挂到这里，不要单独写 hover/active，**也不要在静息态改成 --fg 或 --accent**——
+   一旦某个按钮是纯白或蓝色，同一个界面里就会看出「按钮颜色不统一」（这是用户明确提过的）。
+   唯一的例外是 .act.on：活动栏里当前打开的那个面板用强调色，那是「选中态」而不是静息色。 */
+.tool-btn:hover:not(:disabled), .icon-btn:hover:not(:disabled), .search-icon:hover:not(:disabled), .menu-item:hover:not(:disabled), .twist:hover:not(:disabled), .hist-del:hover:not(:disabled), .toast-x:hover:not(:disabled) { color: var(--fg); background: rgba(76, 141, 255, .08); border-color: transparent; }
+.tool-btn:active:not(:disabled), .icon-btn:active:not(:disabled), .search-icon:active:not(:disabled), .menu-item:active:not(:disabled), .twist:active:not(:disabled), .hist-del:active:not(:disabled), .toast-x:active:not(:disabled) { color: var(--accent); background: rgba(76, 141, 255, .16); border-color: transparent; }
+/* 悬停提示：原生 title 由系统绘制、无法跟随主题（在暗色下仍是白底），故改用自带提示。
+   只给「纯图标」按钮挂 data-tip；有文字（图标+文字或纯文字）的按钮不加，避免废话。
+   提示挂在按钮下方，贴右边缘的按钮改为向左展开，防止被 .pane 的 overflow:hidden 裁掉。 */
+[data-tip] { position: relative; }
+[data-tip]::after {
+  content: attr(data-tip); position: absolute; top: calc(100% + 7px); left: 50%; transform: translateX(-50%); z-index: 40;
+  padding: 5px 9px; background: var(--panel2); color: var(--fg); border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .45); font-size: 12.5px; line-height: 1.35; white-space: nowrap;
+  pointer-events: none; opacity: 0; transition: opacity .12s ease;
+}
+[data-tip]:hover::after { opacity: 1; transition-delay: .28s; }
+.tool-icons [data-tip]::after, .activity [data-tip]::after, .hist-del[data-tip]::after { left: auto; right: 0; transform: none; }
+.twist { width: 16px; flex: none; background: none; border: 0; border-radius: 4px; color: var(--muted); cursor: pointer; padding: 0; text-align: center; }
+.idx { color: var(--muted); }
+.colon { color: var(--muted); }
+.badge { color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; font-size: 12px; }
+.val.str { color: var(--str); }
+.val.number { color: var(--num); }
+.val.boolean { color: var(--bool); }
+.val.null { color: var(--muted); }
+.copyable { cursor: pointer; }
+.copyable:hover { text-decoration: underline; text-underline-offset: 2px; }
+.mark { background: #ffd54a; color: #1a1a1a; border-radius: 2px; }
+/* 把标记的背景撑到「行框」高度（line-height 1.6 × 15px = 24px）。
+   <mark> 的背景默认只覆盖字体内容区（实测 18px），比整行框矮 6px。既然选区画在标记之上，
+   黄块若比蓝色选区带矮，就会在蓝带里缩成孤零零的一小块；撑到 24px 后两者等高，
+   整段读起来才是连续的一条。行内元素的纵向 padding 不参与行框高度计算，所以 .editor-marks
+   的排版纹丝不动，仍与 textarea 严格对齐；横向 padding 必须保持 0（会推挤同行文字）。
+   3px 正好补齐 18→24。不要随手加大：多出来的部分不会被选区盖住，会在蓝带上下露出黄边。
+   只作用于编辑器这层：树里的 .mark 不受影响，不会上下溢出到相邻行。 */
+.editor-marks .mark { padding: 3px 0; }
+/* 当前命中项：用一圈强调色描边区分，不改背景色——搜索跳转时选区恰好等于命中长度，
+   改背景色就等于没提示。box-shadow 不占布局，不会让 <pre> 与 textarea 错位。
+   注意 JSX 仍保留 "active" 类名——搜索滚动定位靠 querySelector(".mark.active")，不能删。 */
+.mark.active { box-shadow: 0 0 0 2px var(--accent); }
+.ai { background: var(--bg); display: flex; flex-direction: column; min-height: 0; min-width: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.ai-output { margin: 0; padding: 10px; overflow: auto; white-space: pre-wrap; word-break: break-word; flex: 1; min-height: 0; font: inherit; }
+.searchbar { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: flex; align-items: center; justify-content: center; min-width: 0; z-index: 5; }
+.topbar-stats { margin-left: auto; }
+.search-pill { display: flex; align-items: center; gap: 2px; width: min(420px, 100%); padding: 3px 6px 3px 14px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 2px 10px rgba(0, 0, 0, .35); transition: border-color .15s; }
+.search-pill:focus-within { border-color: var(--accent); }
+.search-input { flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: var(--fg); font: inherit; font-size: 14px; padding: 4px 0; }
+.search-input::placeholder { color: var(--muted); }
+.search-count { flex: none; padding: 0 8px; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.search-sep { flex: none; width: 1px; height: 16px; margin: 0 4px; background: var(--border); }
+/* user-select: none —— 这两个键支持长按连发，按住时拖动不该拉起文字选择 */
+.search-icon { flex: none; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; padding: 0; background: none; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer; user-select: none; }
+/* 历史记录：一条一张卡片。标题=相对时间，副行=绝对时间 · 体积，第三行=压成一行的正文。
+   卡片自带背景，所以 .hist-main 不挂到全局按钮规则上（会和卡片背景叠成两层高亮），
+   悬停反馈改由卡片自己给。 */
+/* align-items: center 让删除按钮在卡片里垂直居中（卡片固定两行） */
+.hist-row { display: flex; align-items: center; gap: 4px; margin: 0 2px 6px; padding: 7px 6px 7px 10px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; }
+/* 悬停和按下都高亮**整张卡**。按下用 :has() 限定「按在可点区域」——
+   否则按右边的删除 × 时整张卡也会跟着亮，像是要恢复。 */
+.hist-row:hover { border-color: var(--line); background: rgba(76, 141, 255, .08); }
+.hist-row:has(.hist-main:active) { border-color: var(--accent); background: rgba(76, 141, 255, .16); }
+.hist-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; text-align: left; background: none; border: 0; border-radius: 6px; color: var(--fg); padding: 0; cursor: pointer; font: inherit; }
+/* 第一行：相对时间 + 绝对时间 · 大小。meta 靠右并允许省略，
+   否则面板拖窄时这两个不可收缩的块会顶出去。 */
+.hist-line1 { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.hist-rel { flex: none; color: var(--fg); font-size: 14px; }
+.hist-meta { min-width: 0; margin-left: auto; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.hist-prev { color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 清空按钮推到面板标题栏最右 */
+.hist-clear { margin-left: auto; }
+/* 树视图的两个批量按钮推到标题栏最右 */
+.tree-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+/* 空状态：两行，第二行说明保留上限——不然条目悄悄被裁掉时用户不知道有闸 */
+.hist-empty { display: flex; flex-direction: column; gap: 6px; line-height: 1.55; }
+/* 消息提示（全项目通用，见 components/JsonTool.tsx 的 notify）。右下角，只有点 × 才关。
+   z-index 60 是为了压过 40 的 tooltip 层——现有最高就是它。
+   容器 pointer-events:none、每条 toast 再打开：否则右下角会有一块看不见的区域吃掉点击。
+
+   column-reverse 是关键：新消息追加在 DOM 末尾 → 落在**视觉最上方**。容器贴着 bottom:16px 锚定，
+   所以已有消息的位置纹丝不动，只有新的一条出现在它们上面；反过来（column）每来一条都会把
+   上面所有消息往上顶一次。
+   间距用每条自己的 margin-top，不用容器的 gap —— 退场时要把这条间距一起收掉，gap 收不了。 */
+.toasts { position: fixed; right: 16px; bottom: 16px; z-index: 60; display: flex; flex-direction: column-reverse; align-items: flex-end; pointer-events: none; }
+/* 小圆角矩形 + 分型浅色底，对齐 ElMessage 的观感。
+   底色的做法：--panel2 打底（气泡浮在编辑器上方，不能透出下面的字），再叠一层同色 13% 的渐变。
+   文字与图标继承 .toast 的 color，所以每型只需一条规则把 --tint / color / border-color 一起给出。
+   max-height 与 overflow 是给退场动画用的：max-height 从 auto 收不到 0，得先有个具体起始值
+   （正文永远单行，实测一条约 42px，60px 够用）。 */
+.toast { pointer-events: auto; cursor: default; display: flex; align-items: center; gap: 7px; max-width: 340px; margin-top: 6px; max-height: 60px; overflow: hidden; padding: 9px 8px 9px 13px; background-color: var(--panel2); background-image: linear-gradient(var(--tint, transparent), var(--tint, transparent)); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 22px rgba(0, 0, 0, .5); color: var(--fg); font-size: 13.5px; animation: toast-in .16s ease-out; }
+.toast-icon { flex: none; width: 15px; height: 15px; }
+.toast.primary { --tint: rgba(76, 141, 255, .13); color: var(--accent); border-color: rgba(76, 141, 255, .35); }
+.toast.success { --tint: rgba(154, 230, 160, .13); color: var(--str); border-color: rgba(154, 230, 160, .35); }
+.toast.info { --tint: rgba(139, 147, 167, .13); color: var(--muted); border-color: rgba(139, 147, 167, .35); }
+.toast.warning { --tint: rgba(240, 180, 107, .13); color: var(--num); border-color: rgba(240, 180, 107, .35); }
+.toast.error { --tint: rgba(255, 107, 107, .13); color: var(--err); border-color: rgba(255, 107, 107, .35); }
+.toast-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toast-x { flex: none; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; background: none; border: 0; border-radius: 50%; color: var(--muted); cursor: pointer; }
+/* 进场：从上方落下（新消息出现在堆叠顶部） */
+@keyframes toast-in { from { opacity: 0; transform: translateY(-8px) scale(.96); } to { opacity: 1; transform: none; } }
+/* 退场：往下落，同时把高度 / 内边距 / 边框 / 间距一起收成 0。
+   不一起收的话，元素摘掉的那一刻上面几条会硬跳一下——这正是「动画有问题」的来源。
+   时长必须与 JS 里的 TOAST_OUT_MS 一致，否则数组会先于动画把它摘掉。 */
+@keyframes toast-out { to { opacity: 0; transform: translateY(10px); max-height: 0; margin-top: 0; padding-top: 0; padding-bottom: 0; border-width: 0; } }
+.toast.leaving { animation: toast-out .2s ease-in forwards; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .toast, .toast.leaving { animation: none; } }
+.hist-del { flex: none; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; background: none; border: 1px solid transparent; border-radius: 6px; color: var(--muted); cursor: pointer; }
+@media (max-width: 900px) {
+  .main { flex-direction: column; }
+  .splitter { display: none; }
+  .side-body { width: 100% !important; height: 50%; }
+  .activity { width: 100%; height: 46px; flex-direction: row; justify-content: center; padding: 0; }
+  .side-body > .pane, .side-body > .ai { border-radius: 8px; }
+  .side-body + .activity { margin-left: 0; margin-top: -1px; border: 1px solid var(--line); border-top: 0; border-radius: 0 0 8px 8px; }
+}
