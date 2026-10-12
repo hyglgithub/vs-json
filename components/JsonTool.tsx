@@ -2,7 +2,7 @@
 import type { PointerEvent as ReactPointerEvent } from "react";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ChangeEvent, DragEvent, ReactNode } from "react";
+import type { CSSProperties, ChangeEvent, DragEvent, ReactNode } from "react";
 
 
 import { BS, HIST_KEY, HIST_MAX, HIST_MAX_CHARS, NL1, NL2, SAMPLE, TOAST_MAX, TOAST_MS, TOAST_OUT_MS } from "../lib/constants";
@@ -10,7 +10,12 @@ import type { HistoryEntry, ToastKind } from "../lib/constants";
 import { collectPaths, computeStats, deepSort, findMatches, isObject, joinIndex, joinKey, valueClass } from "../lib/json";
 import type { JsonValue, Match } from "../lib/json";
 import { escapeText, escapeUnicode, reformatJson, unescapeText, unescapeUnicode } from "../lib/text";
-import { fmtBytes, fmtRel, fmtTime, histPreview } from "../lib/format";
+import { fmtBytes, fmtFileStamp, fmtRel, fmtTime, histPreview } from "../lib/format";
+
+// 行号层要不要渲染的阈值。行号是**按逻辑行**渲染的（见 .editor-nums 的注释），
+// 一个逻辑行一个 <div>，所以行数直接等于 DOM 节点数。超过这个数就不画行号了：
+// 输入框本身仍然正常，只是左边没有号码。别把它当成"性能优化"删掉。
+const LINE_NUM_MAX = 20000;
 
 function Highlight({ text, query, active }: { text: string; query: string; active?: boolean }) {
   if (!query) return <>{text}</>;
@@ -102,6 +107,9 @@ function toastIcon(kind: ToastKind): ReactNode {
 export default function JsonTool() {
   const [raw, setRaw] = useState("");
   const [indent, setIndent] = useState(2);
+  // 编辑器字号。只作用于左侧输入框（含行号），不影响右侧树和面板——
+  // 这是代码编辑器里「字体大小」的通常含义。默认 15 对齐 body 的 font。
+  const [fontSize, setFontSize] = useState(15);
   const [sortMode, setSortMode] = useState<"off" | "asc" | "desc">("off");
   const [openMenu, setOpenMenu] = useState<"unicode" | "escape" | null>(null);
   const [menuLocked, setMenuLocked] = useState(false);
@@ -137,12 +145,15 @@ export default function JsonTool() {
   const [toasts, setToasts] = useState<{ id: number; text: string; kind: ToastKind; leaving: boolean }[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [now, setNow] = useState(() => Date.now());
-  const [rightPanel, setRightPanel] = useState<"none" | "tree" | "ai" | "settings" | "history">("tree");
+  const [rightPanel, setRightPanel] = useState<"none" | "tree" | "ai" | "settings" | "history" | "help">("tree");
   const [sideWidth, setSideWidth] = useState(50);
   const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const backRef = useRef<HTMLPreElement | null>(null);
   const marksRef = useRef<HTMLPreElement | null>(null);
+  // 行号层。它自己也是 overflow:hidden 的滚动容器，靠直接赋 scrollTop 跟 textarea 对齐，
+  // 和 .editor-back 是同一套办法。横向不跟——行号要钉在左槽里，不能跟着横向滚走。
+  const numsRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
   const histIdRef = useRef(0);
@@ -223,6 +234,19 @@ export default function JsonTool() {
 
   const tooBig = raw.length > 5 * 1024 * 1024;
   const ready = !parsed.empty && !parsed.error;
+
+  // 行号按 \n 切成逻辑行：折行的续行**不编号**，所以号码和 JSON 的逻辑行严格一一对应。
+  // 能做到这点，靠的是 .editor-nums 与 .editor-back 的盒子尺寸、字体、换行规则完全一致——
+  // 某个逻辑行在编辑器里占几行，行号层里那个块就占几行高，下一个号码自然落在下一个行首。
+  const lines = useMemo(() => raw.split(NL1), [raw]);
+  const showNums = lines.length <= LINE_NUM_MAX;
+  // 槽宽按最大行号的位数算，两位起步（不然只有 9 行时槽口会窄得贴住正文）。
+  // 用 ch 而不是 px：字号是可调的，ch 会跟着 --editor-font 一起缩放。
+  const gutterW = Math.max(2, String(lines.length).length);
+  const editorStyle = {
+    "--editor-font": fontSize + "px",
+    "--gutter": showNums ? "calc(" + gutterW + " * 1ch + 16px)" : "0px",
+  } as CSSProperties;
   const info = useMemo(() => (ready ? computeStats(parsed.value) : { nodes: 0, depth: 0 }), [ready, parsed.value]);
 
   const matches = useMemo(() => {
@@ -526,15 +550,18 @@ export default function JsonTool() {
     notify("已保存到历史", "success");
   };
   const doCopy = () => { copy(raw, "已复制"); };
+  // 文件名带秒级时间戳。以前固定叫 data.json，连下两次浏览器只会给
+  // data(1).json —— 靠文件名分不清哪份是哪份。
   const doDownload = () => {
     if (!raw) return;
+    const name = "json-" + fmtFileStamp(Date.now()) + ".json";
     const blob = new Blob([raw], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = "data.json";
+    a.download = name;
     a.click();
     URL.revokeObjectURL(a.href);
-    notify("已下载 data.json");
+    notify("已下载 " + name);
   };
 
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
@@ -613,6 +640,9 @@ export default function JsonTool() {
         <div className="brand">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" role="img" aria-label="JSON 工具"><path d="M8 3H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1" /><path d="M16 3h1a2 2 0 0 1 2 2v4a2 2 0 0 0 2 2 2 2 0 0 0-2 2v4a2 2 0 0 1-2 2h-1" /></svg>
           <span className="brand-name">Jsontool</span>
+          {/* 等待输入 / 节点·深度·字节。原来靠 margin-left:auto 顶在顶栏最右，
+              现在挂在标题右边；顶栏右侧那块位置空出来另有用途。 */}
+          <span className="muted small topbar-stats">{ready ? "节点 " + info.nodes + " · 深度 " + info.depth + " · " + raw.length + " 字节" : parsed.error ? "解析错误" : "等待输入"}</span>
         </div>
 
         <div className="searchbar">
@@ -637,14 +667,13 @@ export default function JsonTool() {
             </button>
           </div>
         </div>
-        <span className="muted small topbar-stats">{ready ? "节点 " + info.nodes + " · 深度 " + info.depth + " · " + raw.length + " 字节" : parsed.error ? "解析错误" : "等待输入"}</span>
       </div>
       <div className="main">
         <div className="pane">
           <div className="pane-head">
             <div className="actions">
               <button className="tool-btn" onClick={doFormat}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" /></svg>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" /><path d="M14 4l-4 16" /></svg>
                 格式化
               </button>
               <button className="tool-btn" onClick={doMinify}>
@@ -680,13 +709,25 @@ export default function JsonTool() {
               <input ref={fileRef} type="file" accept=".json,application/json" style={{ display: "none" }} onChange={onPickFile} />
               <button className="icon-btn" onClick={doDownload} data-tip="下载" aria-label="下载"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg></button>
               <button className="icon-btn" onClick={doCopy} data-tip="复制" aria-label="复制"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
-              <button className="icon-btn" onClick={doClear} data-tip="清空" aria-label="清空"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg></button>
+              {/* 扫把，不是垃圾桶。清空是「把这儿扫干净」，和历史记录里那条
+                  「删除」不是一回事；两者以前共用垃圾桶图标，容易看错。 */}
+              <button className="icon-btn" onClick={doClear} data-tip="清空" aria-label="清空"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 4l-6.9 6.9"/><path d="M10.9 10.9l2.2 2.2-4.6 7.4-5-5z"/><path d="M11.6 11.6l-6.4 5.6"/><path d="M12.4 12.4l-5.6 6.4"/></svg></button>
             </div>
           </div>
-          <div className="editor-wrap">
+          <div className="editor-wrap" style={editorStyle}>
             <pre className="editor-back" ref={backRef} aria-hidden="true">{raw}</pre>
-            <textarea ref={editorRef} className="editor-front" value={raw} onChange={(e) => setRaw(e.target.value)} onScroll={(e) => { const st = e.currentTarget.scrollTop; const sl = e.currentTarget.scrollLeft; const bk = backRef.current; if (bk) { bk.scrollTop = st; bk.scrollLeft = sl; } const mk = marksRef.current; if (mk) { mk.scrollTop = st; mk.scrollLeft = sl; } }} spellCheck={false} placeholder="粘贴 JSON，或拖入 .json 文件" />
+            <textarea ref={editorRef} className="editor-front" value={raw} onChange={(e) => setRaw(e.target.value)} onScroll={(e) => { const st = e.currentTarget.scrollTop; const sl = e.currentTarget.scrollLeft; const bk = backRef.current; if (bk) { bk.scrollTop = st; bk.scrollLeft = sl; } const mk = marksRef.current; if (mk) { mk.scrollTop = st; mk.scrollLeft = sl; } const nm = numsRef.current; if (nm) nm.scrollTop = st; }} spellCheck={false} placeholder="粘贴 JSON，或拖入 .json 文件" />
             <pre className="editor-marks" ref={marksRef} aria-hidden="true">{highlightRaw}</pre>
+            {/* 行号层：`{line}` 是**透明的**，只用来把每个逻辑行撑到和编辑器里一样高，
+                这样折行的续行不会让后面的号码往上跑。真正显示的只有绝对定位的 .num。
+                它是第 4 层，但和前三层不共享滚动——textarea 的 onScroll 直接赋 scrollTop。 */}
+            {showNums && (
+              <div className="editor-nums" ref={numsRef} aria-hidden="true">
+                {lines.map((line, i) => (
+                  <div className="num-line" key={i}><span className="num">{i + 1}</span>{line}</div>
+                ))}
+              </div>
+            )}
           </div>
 
           {parsed.error && <div className="err">{parsed.error}</div>}
@@ -759,7 +800,7 @@ export default function JsonTool() {
                   ))}
                 </div>
               </div>
-            ) : (
+            ) : rightPanel === "settings" ? (
               <div className="pane">
                 <div className="pane-head">
                   <span>设置</span>
@@ -767,8 +808,15 @@ export default function JsonTool() {
                 <div className="settings">
                   <label className="field"><span>缩进</span>
                     <select className="input" value={indent} onChange={(e) => setIndent(Number(e.target.value))}>
+                      <option value={1}>1 空格</option>
                       <option value={2}>2 空格</option>
+                      <option value={3}>3 空格</option>
                       <option value={4}>4 空格</option>
+                    </select>
+                  </label>
+                  <label className="field"><span>字体大小</span>
+                    <select className="input" value={fontSize} onChange={(e) => setFontSize(Number(e.target.value))}>
+                      {[12, 13, 14, 15, 16, 17, 18, 19, 20].map((n) => <option key={n} value={n}>{n} px</option>)}
                     </select>
                   </label>
                   <label className="field"><span>Key 排序</span>
@@ -783,6 +831,15 @@ export default function JsonTool() {
                   <label className="field field-wide"><span>访问密钥（存本机 localStorage，经服务端转发）</span><input className="input" type="password" value={aiKey} onChange={(e) => setAiKey(e.target.value)} /></label>
                 </div>
               </div>
+            ) : (
+              /* 帮助面板：内容**留空**，等以后填。结构和其他面板保持一样，
+                 要加东西直接往这个 .tree 里塞即可。 */
+              <div className="pane">
+                <div className="pane-head">
+                  <span>帮助</span>
+                </div>
+                <div className="tree" />
+              </div>
             )}
             </div>
           </>
@@ -792,6 +849,7 @@ export default function JsonTool() {
           <button className={"act" + (rightPanel === "history" ? " on" : "")} data-tip="历史记录" aria-label="历史记录" onClick={() => setRightPanel((v) => (v === "history" ? "none" : "history"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" /></svg></button>
           <button className={"act" + (rightPanel === "ai" ? " on" : "")} data-tip="AI 整理" aria-label="AI 整理" onClick={() => setRightPanel((v) => (v === "ai" ? "none" : "ai"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg></button>
           <button className={"act" + (rightPanel === "settings" ? " on" : "")} data-tip="设置" aria-label="设置" onClick={() => setRightPanel((v) => (v === "settings" ? "none" : "settings"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+          <button className={"act" + (rightPanel === "help" ? " on" : "")} data-tip="帮助" aria-label="帮助" onClick={() => setRightPanel((v) => (v === "help" ? "none" : "help"))}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M9.3 9.4a2.8 2.8 0 1 1 3.5 2.7c-.5.18-.8.62-.8 1.15v.55" /><path d="M12 17.3h.01" /></svg></button>
         </div>
       </div>
       {/* 消息提示：放在 .app 最后一个子元素即可——position:fixed 脱离文档流，

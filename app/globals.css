@@ -77,12 +77,41 @@ button { font: inherit; }
    （实测 10px），于是同样的文字在下面两个 <pre> 里换行到第 80 列、在 textarea 里换到第 78 列。
    换行点一错，从那一行往下光标和蓝色选区全部错位——而黄色标记是对的，因为它出自 <pre>。
    加上 scrollbar-gutter 后三层**永远**预留同样的滚动条槽位，有没有滚动条都不再改变内容宽度。 */
-.editor-back, .editor-front, .editor-marks { position: absolute; inset: 0; margin: 0; border: 0; padding: 10px; font: inherit; line-height: inherit; white-space: pre-wrap; word-break: break-word; scrollbar-gutter: stable; }
+/* 四层共用同一套盒子度量：inset / padding / 字号 / 行高 / 换行规则必须逐条相同。
+   左边多留出的 --gutter 是行号槽，四层一起让，所以彼此的相对关系没变。
+   font-size 走 --editor-font（设置面板可调）：行高写成无单位的 1.6 而不是继承，
+   这样它会随字号一起缩放——继承下来的是个固定像素值，改字号就会和文字脱节。
+   --gutter 由 JS 内联给出（按最大行号的位数算 ch），不画行号时直接给 0px。 */
+/* font: inherit **必须留着**，字号行高只在它后面覆盖。
+   不能把 font: inherit 拆成 font-size —— <pre> 和 <textarea> 带浏览器的 UA 默认
+   font-family: monospace，一拆它们就掉回默认等宽字体，而做行号的 <div> 仍继承 body 的列表。
+   四层字体一旦不同，ch 宽度就不同（实测 8px vs 8.247px），换行点迟早分叉。 */
+.editor-back, .editor-front, .editor-marks, .editor-nums { position: absolute; inset: 0; margin: 0; border: 0; padding: 10px 10px 10px calc(10px + var(--gutter, 32px)); font: inherit; font-size: var(--editor-font, 15px); line-height: 1.6; white-space: pre-wrap; word-break: break-word; scrollbar-gutter: stable; }
 .editor-back { z-index: 0; background: var(--bg); color: var(--fg); overflow: hidden; pointer-events: none; }
 .editor-front { z-index: 2; background: transparent; color: transparent; caret-color: var(--fg); resize: none; outline: none; overflow: auto; }
 .editor-front::placeholder { color: var(--muted); }
 .editor-front::selection { background: rgba(76, 141, 255, .38); }
 .editor-marks { z-index: 1; background: transparent; color: transparent; overflow: hidden; pointer-events: none; }
+/* 行号层（第 4 层）。它和上面三层盒子完全一样——这是行号能对齐的**全部依据**：
+   某个逻辑行在编辑器里折成几行，这里对应的 .num-line 就占几行高，
+   下一个号码自然落回下一个逻辑行的行首。折行的续行**不编号**，这是明确的取舍。
+   z-index 3：必须压在最上面。.editor-back 的背景不透明，而行号画在它的 padding-left 区域里，
+   排在它下面会被整块盖掉。pointer-events:none 保证它永远不吃点击。
+   横向不同步（onScroll 只赋 scrollTop）：行号要钉死在左槽里，不能跟着正文横move。 */
+.editor-nums { z-index: 3; background: transparent; overflow: hidden; pointer-events: none; }
+/* position:relative 给 .num 当定位参照，display:block 让每个逻辑行各占一块。
+   min-height **不能省**：空行（连续两个 \n）的块里只剩一个绝对定位的 .num，
+   脱离文档流之后块高会塌成 0，后面所有号码就整体上移一行。1.6em 正好等于 line-height。 */
+.num-line { position: relative; display: block; min-height: 1.6em; }
+/* 号码挂进正文左侧的槽里。right:calc(100% + 8px) 是相对 .num-line 的**内容盒**算的，
+   即号码右边缘落在正文起始位置左侧 8px —— 位数不同也右对齐成一条直线。
+   top:0 让它和本行第一个行框顶对齐；行高一致，基线自然一致。 */
+/* white-space / word-break 这两条**不能省**。从 .editor-nums 继承下来的
+   word-break:break-word 会把「10」的最小内容宽度压成 1 个字符，而 right:calc(100% + 8px)
+   让这个绝对定位元素的可用宽度算出来是负数 —— 两头一夹，shrink-to-fit 塌成 1ch，
+   两位数就溢出到格子外（实测：1、10、21 的盒子全是 8.3px 宽）。nowrap 让最小宽度
+   回到整个数字的宽度，盒子才撑得开。 */
+.num { position: absolute; top: 0; right: calc(100% + 8px); white-space: nowrap; word-break: normal; color: var(--muted); }
 .err { color: var(--err); padding: 6px 10px; border-top: 1px solid var(--border); white-space: pre-wrap; word-break: break-all; }
 .err.inline { border: 0; padding: 0; }
 .tree { flex: 1; overflow: auto; padding: 8px 4px; min-height: 0; }
@@ -140,9 +169,14 @@ button { font: inherit; }
    黄块若比蓝色选区带矮，就会在蓝带里缩成孤零零的一小块；撑到 24px 后两者等高，
    整段读起来才是连续的一条。行内元素的纵向 padding 不参与行框高度计算，所以 .editor-marks
    的排版纹丝不动，仍与 textarea 严格对齐；横向 padding 必须保持 0（会推挤同行文字）。
-   3px 正好补齐 18→24。不要随手加大：多出来的部分不会被选区盖住，会在蓝带上下露出黄边。
-   只作用于编辑器这层：树里的 .mark 不受影响，不会上下溢出到相邻行。 */
-.editor-marks .mark { padding: 3px 0; }
+   只作用于编辑器这层：树里的 .mark 不受影响，不会上下溢出到相邻行。
+
+   写成 0.2em 而不是 3px：字号现在是可调的（设置面板 12–20px），补多少要跟着字号走。
+   0.2em 在默认 15px 下**正好还是 3px**，标定不变；改成固定 px 的话，字号调到 20px 时
+   行框涨到 32px，黄块只有 29px，会在蓝带上下各露 0.5px。实测需要的值：
+   12px→2.6、15px→3.0、20px→4.5，0.2em 给的是 2.4/3.0/4.0，全在 0.5px 以内。
+   横向 padding 仍然必须是 0。 */
+.editor-marks .mark { padding: 0.2em 0; }
 /* 当前命中项：用一圈强调色描边区分，不改背景色——搜索跳转时选区恰好等于命中长度，
    改背景色就等于没提示。box-shadow 不占布局，不会让 <pre> 与 textarea 错位。
    注意 JSX 仍保留 "active" 类名——搜索滚动定位靠 querySelector(".mark.active")，不能删。 */
@@ -150,7 +184,10 @@ button { font: inherit; }
 .ai { background: var(--bg); display: flex; flex-direction: column; min-height: 0; min-width: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .ai-output { margin: 0; padding: 10px; overflow: auto; white-space: pre-wrap; word-break: break-word; flex: 1; min-height: 0; font: inherit; }
 .searchbar { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: flex; align-items: center; justify-content: center; min-width: 0; z-index: 5; }
-.topbar-stats { margin-left: auto; }
+/* 统计信息现在挂在标题（.brand）右边，不再顶到顶栏最右端。
+   原来那条 margin-left:auto 是把它推到右边缘用的，留着会把它从标题旁推开；
+   这里只补一点点间距（.brand 自己还有 gap:8px）。顶栏右侧那块位置空出来另有用途。 */
+.topbar-stats { margin-left: 2px; }
 .search-pill { display: flex; align-items: center; gap: 2px; width: min(420px, 100%); padding: 3px 6px 3px 14px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 2px 10px rgba(0, 0, 0, .35); transition: border-color .15s; }
 .search-pill:focus-within { border-color: var(--accent); }
 .search-input { flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: var(--fg); font: inherit; font-size: 14px; padding: 4px 0; }

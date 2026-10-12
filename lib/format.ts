@@ -16,6 +16,16 @@ export function fmtRel(ts: number, now: number): string {
   return fmtTime(ts);
 }
 
+// 下载文件名里用的时间戳：YYYYMMDD-HHmmss。
+// 不能复用 fmtTime——那个带 "/" 和空格，做文件名会被浏览器改写甚至截断。
+// 存在的理由：下载名固定成 data.json 时，连下两次浏览器只会给你 data(1).json，
+// 分不清哪份是哪份；带上秒级时间戳，每次下载天然不同名。
+export function fmtFileStamp(ts: number): string {
+  const d = new Date(ts);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + "-" + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+}
+
 export function fmtBytes(n: number): string {
   if (n < 1024) return n + " B";
   const kb = n / 1024;
