@@ -54,7 +54,9 @@ button { font: inherit; }
 .setting-desc { display: block; margin-top: 2px; color: var(--muted); font-size: 12.5px; line-height: 1.55; }
 /* 控件排在说明下面。宽度封顶：面板宽度是拖 splitter 决定的，默认就能到 800px，
    一个写着「2 空格」的下拉拉成 800px 宽很荒唐（实测过 804px）。 */
-.setting > .input { margin-top: 8px; width: 100%; max-width: 320px; }
+/* 下拉的按钮嵌在 .sel 里，不是 .setting 的直接子元素，所以宽度要挂在 .sel 上。
+   两者共用同一条尺寸规则，收起态的观感才和输入框完全一致。 */
+.setting > .input, .setting > .sel { margin-top: 8px; width: 100%; max-width: 320px; }
 /* 布尔项：一个方框 + 说明文字。方框自己画，原生 checkbox 在深色下是浅色方块，
    和这套配色对不上。 */
 .setting-check { display: flex; align-items: flex-start; gap: 8px; margin-top: 8px; cursor: pointer; }
@@ -187,31 +189,41 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
 .tool-btn svg { flex: none; }
 /* 开始分析按钮推到 AI 面板标题栏最右（同 .hist-clear 的做法） */
 .ai-run { margin-left: auto; }
-.actions .menu-wrap { position: relative; display: inline-flex; }
-.actions .caret { display: inline-block; width: 0; height: 0; margin-left: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 4px solid currentColor; vertical-align: middle; }
+/* 下拉菜单。原来整套都锁在 .actions 里，现在设置面板的下拉也用同一套，
+   所以放开成全局类——**在 .actions 里效果完全一样**，只有那条悬停桥接
+   （.actions .menu::before）仍留在 .actions 里，因为设置的下拉是点开点关、不靠悬停。 */
+.menu-wrap { position: relative; display: inline-flex; }
+.caret { display: inline-block; width: 0; height: 0; margin-left: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 4px solid currentColor; vertical-align: middle; }
 .actions .menu::before { content: ""; position: absolute; top: -8px; left: 0; right: 0; height: 8px; }
-.actions .menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; min-width: 160px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,.45); display: flex; flex-direction: column; }
-.actions .menu-item { text-align: left; background: none; border: 0; color: var(--muted); padding: 7px 10px; border-radius: 6px; cursor: pointer; white-space: nowrap; font: inherit; }
+.menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; min-width: 160px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,.45); display: flex; flex-direction: column; }
+.menu-item { text-align: left; background: none; border: 0; color: var(--muted); padding: 7px 10px; border-radius: 6px; cursor: pointer; white-space: nowrap; font: inherit; }
+
+/* ---- 设置面板的下拉 ----
+   原生 <select> 的弹层由系统绘制（系统蓝实心高亮 + 方角），改不动，
+   所以整个换成按钮 + .menu。收起时长得和原来的 select 一模一样（借用 .input 的底/边框/圆角/箭头）。 */
+.sel { position: relative; }
+.sel-btn { display: flex; align-items: center; width: 100%; text-align: left; cursor: pointer; }
+.sel-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 弹层用 position:fixed（坐标由 JS 给内联 style），**不能是 absolute**：
+   .settings 是 overflow:auto 的滚动容器，absolute 的弹层逃不出它的裁剪框——
+   矮窗口下实测菜单底 597 被切在面板底 418。fixed 直接从裁剪里脱身，
+   代价是要自己处理滚动（JS 里监听 scroll 直接关掉）和贴边翻转（同见 JS）。
+   min-width 也要压掉：.menu 默认 160px，比按钮窄时会把它撑开。 */
+.sel-menu { position: fixed; min-width: 0; }
 .tool-icons { margin-left: auto; display: flex; align-items: center; gap: 4px; }
 .icon-btn { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: none; border: 1px solid transparent; border-radius: 8px; color: var(--muted); cursor: pointer; }
 /* 全局按钮交互规范：**静息 = --muted（白中透灰）**；悬停 = --fg + 8% 蓝底；按下 = 强调色 + 16% 蓝底。
    新增按钮一律挂到这里，不要单独写 hover/active，**也不要在静息态改成 --fg 或 --accent**——
    一旦某个按钮是纯白或蓝色，同一个界面里就会看出「按钮颜色不统一」（这是用户明确提过的）。
-   例外有两个：
-   1) .act.on —— 活动栏里当前打开的面板用强调色，那是「选中态」而不是静息色。
-   2) .actions .menu-item —— 下拉菜单项走中性灰（见它自己那组规则）。列表项**不是按钮**：
-      划过 ≠ 选中，而蓝色在这套界面里专门表达「选中/激活」，用在划过上会误导。 */
-.tool-btn:hover:not(:disabled), .icon-btn:hover:not(:disabled), .search-icon:hover:not(:disabled), .twist:hover:not(:disabled), .hist-del:hover:not(:disabled), .toast-x:hover:not(:disabled) { color: var(--fg); background: rgba(76, 141, 255, .08); border-color: transparent; }
-.tool-btn:active:not(:disabled), .icon-btn:active:not(:disabled), .search-icon:active:not(:disabled), .twist:active:not(:disabled), .hist-del:active:not(:disabled), .toast-x:active:not(:disabled) { color: var(--accent); background: rgba(76, 141, 255, .16); border-color: transparent; }
-/* 下拉菜单项**不挂上面那条全局规则**，单独一套：中性灰，不带蓝。
-   理由：蓝色在这个界面里是「选中 / 激活」的语义（活动栏当前面板、复选框、聚焦描边都是它）。
-   菜单项只是被鼠标划过，用蓝会让人以为这一项已经被选上了；按下去又变成更浓的蓝，更像是"选中了"。
-   VS Code 的下拉就是这个做法——划过是灰的一层，文字保持主色，选中态另外表达。
-   悬停 7% / 按下 13% 白，两级能一眼看出差别；文字两级都保持 --fg（按下时不再染成强调色）。
-   transition 只做背景色，80ms——够快不会拖沓，又比硬切舒服。 */
-.actions .menu-item:hover:not(:disabled) { color: var(--fg); background: rgba(255, 255, 255, .07); transition: background-color .08s ease; }
-.actions .menu-item:active:not(:disabled) { color: var(--fg); background: rgba(255, 255, 255, .13); }
-@media (prefers-reduced-motion: reduce) { .actions .menu-item:hover:not(:disabled) { transition: none; } }
+   唯一的例外是 .act.on：活动栏里当前打开的那个面板用强调色，那是「选中态」而不是静息色。 */
+.tool-btn:hover:not(:disabled), .icon-btn:hover:not(:disabled), .search-icon:hover:not(:disabled), .menu-item:hover:not(:disabled), .twist:hover:not(:disabled), .hist-del:hover:not(:disabled), .toast-x:hover:not(:disabled) { color: var(--fg); background: rgba(76, 141, 255, .08); border-color: transparent; }
+.tool-btn:active:not(:disabled), .icon-btn:active:not(:disabled), .search-icon:active:not(:disabled), .menu-item:active:not(:disabled), .twist:active:not(:disabled), .hist-del:active:not(:disabled), .toast-x:active:not(:disabled) { color: var(--accent); background: rgba(76, 141, 255, .16); border-color: transparent; }
+/* 下拉项的「当前值」和「键盘/鼠标高亮」。
+   这两条**必须排在上面那对 :hover/:active 之后**：选择器权重都是 (0,2,0)，靠源码顺序决胜负。
+   放前面的话，鼠标一划过当前值那一项它就变回 --fg，"哪个是选中的"就看不出来了。
+   .hi 只画底色不画文字色，所以当前值那项被划过时文字仍是强调色。 */
+.menu-item.on { color: var(--accent); }
+.menu-item.hi { background: rgba(76, 141, 255, .08); }
 /* 悬停提示：原生 title 由系统绘制、无法跟随主题（在暗色下仍是白底），故改用自带提示。
    只给「纯图标」按钮挂 data-tip；有文字（图标+文字或纯文字）的按钮不加，避免废话。
    提示挂在按钮下方，贴右边缘的按钮改为向左展开，防止被 .pane 的 overflow:hidden 裁掉。 */

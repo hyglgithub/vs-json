@@ -1,8 +1,8 @@
 "use client";
 import type { PointerEvent as ReactPointerEvent } from "react";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, ChangeEvent, DragEvent, ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 
 
 import { BS, HIST_KEY, HIST_MAX, HIST_MAX_CHARS, NL1, NL2, SAMPLE, TOAST_MAX, TOAST_MS, TOAST_OUT_MS } from "../lib/constants";
@@ -102,6 +102,109 @@ function toastIcon(kind: ToastKind): ReactNode {
     return <svg className="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M15 9l-6 6" /><path d="M9 9l6 6" /></svg>;
   }
   return <svg className="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 11v5.5" /><path d="M12 7.6h.01" /></svg>;
+}
+
+type SelOption = { value: string; label: string };
+
+// 设置面板用的下拉。**故意不用原生 <select>**：它的弹层由系统绘制，选中项是系统蓝实心高亮、
+// 四角方硬，CSS 一点都碰不到。这里换成「按钮 + .menu」，于是设置里的下拉和工具栏的
+// Unicode / 转义 菜单共用同一套 hover / 按下 / 圆角 / 阴影。
+// 焦点始终留在触发按钮上，弹层里的项只有 role="option"（不参与 Tab 序列），
+// 键盘操作在按钮的 onKeyDown 里统一处理——这是 ARIA combobox 的标准做法。
+function Select({ label, value, options, onChange }: { label: string; value: string; options: SelOption[]; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  // 高亮项。鼠标划入和键盘上下都改它，两者共用同一个高亮，不会各亮各的。
+  const [hi, setHi] = useState(0);
+  // 弹层的**视口**坐标。弹层走 position:fixed，理由见下面那条 useLayoutEffect。
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const cur = options.findIndex((o) => o.value === value);
+  const current = options[cur === -1 ? 0 : cur];
+
+  const openMenu = () => {
+    const b = btnRef.current;
+    if (!b) return;
+    const r = b.getBoundingClientRect();
+    setPos({ top: r.bottom + 6, left: r.left, width: r.width });
+    setHi(cur === -1 ? 0 : cur);
+    setOpen(true);
+  };
+
+  // 下方放不下就翻到按钮上方。
+  // 必须用 useLayoutEffect 而不是 useEffect：它在浏览器**绘制之前**跑完，
+  // 所以「先画在下面、再翻到上面」这一下不会在屏幕上闪出来。
+  useLayoutEffect(() => {
+    const m = menuRef.current;
+    const b = btnRef.current;
+    if (!open || !m || !b) return;
+    const h = m.offsetHeight;
+    const r = b.getBoundingClientRect();
+    const below = window.innerHeight - r.bottom - 6;
+    const above = r.top - 6;
+    if (below < h && above > below) setPos((p) => ({ ...p, top: r.top - h - 6 }));
+  }, [open]);
+
+  // 点外面关掉；面板一滚也关掉。
+  // 滚动那条是因为弹层是 position:fixed：它不跟着 .settings 的滚动走，
+  // 不关的话会脱离按钮浮在原地。scroll 不冒泡，所以要 capture。
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t || !wrapRef.current || !wrapRef.current.contains(t)) setOpen(false);
+    };
+    const onMove = () => setOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("scroll", onMove, true);
+    window.addEventListener("resize", onMove);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("scroll", onMove, true);
+      window.removeEventListener("resize", onMove);
+    };
+  }, [open]);
+
+  const commit = (v: string) => { onChange(v); setOpen(false); };
+
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (e.key === "Escape") { setOpen(false); return; }
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      if (open) commit(options[hi].value);
+      else { setHi(cur === -1 ? 0 : cur); setOpen(true); }
+      return;
+    }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const d = e.key === "ArrowDown" ? 1 : -1;
+      // 收起时方向键直接改值（对齐原生 select 的手感），展开时只移动高亮
+      if (open) setHi((i) => (i + d + options.length) % options.length);
+      else commit(options[(cur + d + options.length) % options.length].value);
+    }
+  };
+
+  return (
+    <div className="sel" ref={wrapRef}>
+      <button ref={btnRef} type="button" className="input sel-btn" aria-label={label} aria-haspopup="listbox" aria-expanded={open}
+        onClick={() => { if (open) setOpen(false); else openMenu(); }} onKeyDown={onKeyDown}>
+        <span className="sel-label">{current.label}</span>
+      </button>
+      {open && (
+        <div ref={menuRef} className="menu sel-menu" role="listbox" aria-label={label} style={{ top: pos.top, left: pos.left, width: pos.width }}>
+          {options.map((o, i) => (
+            <div key={o.value} role="option" aria-selected={o.value === value}
+              className={"menu-item" + (o.value === value ? " on" : "") + (i === hi ? " hi" : "")}
+              onMouseEnter={() => setHi(i)}
+              onClick={() => commit(o.value)}>
+              {o.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function JsonTool() {
@@ -918,26 +1021,23 @@ export default function JsonTool() {
                   <span>设置</span>
                 </div>
                 {/* 每项一块：标题（主色粗体）→ 说明（灰色小字）→ 控件，三者左对齐。
-                    这是照 VS Code 设置页的结构来的。外面套 <label> 是为了点标题也能聚焦控件，
-                    纯布尔项除外——它自己内部就是个 label，套两层会冲突。 */}
+                    这是照 VS Code 设置页的结构来的。
+                    外层**不用 <label>**：<label> 会把内部任何一次点击转发给它关联的控件，
+                    而下拉弹层里的选项也在这一块里，点选项会连带把触发按钮再点一次、菜单立刻重新弹开。
+                    改用 aria-label 给控件命名。 */}
                 <div className="settings">
-                  <label className="setting">
+                  <div className="setting">
                     <span className="setting-title">缩进</span>
                     <span className="setting-desc">格式化与压缩时，每一层嵌套缩进几个空格。</span>
-                    <select className="input" value={indent} onChange={(e) => setIndent(Number(e.target.value))}>
-                      <option value={1}>1 空格</option>
-                      <option value={2}>2 空格</option>
-                      <option value={3}>3 空格</option>
-                      <option value={4}>4 空格</option>
-                    </select>
-                  </label>
-                  <label className="setting">
+                    <Select label="缩进" value={String(indent)} onChange={(v) => setIndent(Number(v))}
+                      options={[{ value: "1", label: "1 空格" }, { value: "2", label: "2 空格" }, { value: "3", label: "3 空格" }, { value: "4", label: "4 空格" }]} />
+                  </div>
+                  <div className="setting">
                     <span className="setting-title">字体大小</span>
                     <span className="setting-desc">只作用于左侧输入框，含行号与折叠三角。</span>
-                    <select className="input" value={fontSize} onChange={(e) => setFontSize(Number(e.target.value))}>
-                      {[12, 13, 14, 15, 16, 17, 18, 19, 20].map((n) => <option key={n} value={n}>{n} px</option>)}
-                    </select>
-                  </label>
+                    <Select label="字体大小" value={String(fontSize)} onChange={(v) => setFontSize(Number(v))}
+                      options={[12, 13, 14, 15, 16, 17, 18, 19, 20].map((n) => ({ value: String(n), label: n + " px" }))} />
+                  </div>
                   <div className="setting">
                     <span className="setting-title">行号</span>
                     <label className="setting-check">
@@ -945,26 +1045,23 @@ export default function JsonTool() {
                       <span>在输入框左侧显示行号。关掉后折叠三角仍在，只是不再编号。</span>
                     </label>
                   </div>
-                  <label className="setting">
+                  <div className="setting">
                     <span className="setting-title">Key 排序</span>
                     <span className="setting-desc">格式化与压缩时，按键名重新排列各层级的字段。</span>
-                    <select className="input" value={sortMode} onChange={(e) => setSortMode(e.target.value as "off" | "asc" | "desc")}>
-                      <option value="off">关闭</option>
-                      <option value="asc">升序</option>
-                      <option value="desc">降序</option>
-                    </select>
-                  </label>
+                    <Select label="Key 排序" value={sortMode} onChange={(v) => setSortMode(v as "off" | "asc" | "desc")}
+                      options={[{ value: "off", label: "关闭" }, { value: "asc", label: "升序" }, { value: "desc", label: "降序" }]} />
+                  </div>
                   <div className="settings-sep" />
-                  <label className="setting">
+                  <div className="setting">
                     <span className="setting-title">AI 服务地址</span>
                     <span className="setting-desc">点「开始分析」时请求的服务端地址。</span>
-                    <input className="input" value={aiEndpoint} onChange={(e) => setAiEndpoint(e.target.value)} />
-                  </label>
-                  <label className="setting">
+                    <input className="input" aria-label="AI 服务地址" value={aiEndpoint} onChange={(e) => setAiEndpoint(e.target.value)} />
+                  </div>
+                  <div className="setting">
                     <span className="setting-title">访问密钥</span>
                     <span className="setting-desc">存在本机 localStorage，每次请求经服务端转发，服务端不保存。</span>
-                    <input className="input" type="password" value={aiKey} onChange={(e) => setAiKey(e.target.value)} />
-                  </label>
+                    <input className="input" aria-label="访问密钥" type="password" value={aiKey} onChange={(e) => setAiKey(e.target.value)} />
+                  </div>
                 </div>
               </div>
             ) : (
