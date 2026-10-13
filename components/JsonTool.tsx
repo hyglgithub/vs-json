@@ -10,9 +10,10 @@ import type { HistoryEntry, ToastKind } from "../lib/constants";
 import { collectPaths, computeStats, deepSort, findMatches, foldRanges, isObject, joinKey } from "../lib/json";
 import type { FoldRange, JsonValue, Match } from "../lib/json";
 import { escapeText, escapeUnicode, reformatJson, unescapeText, unescapeUnicode } from "../lib/text";
-import { fmtFileStamp } from "../lib/format";
+import { DRAFT_MAX_CHARS, DRAFT_WRITE_MS, loadDraft, saveDraft } from "../lib/draft";
+import { fmtBytes, fmtFileStamp } from "../lib/format";
 import { clampSide, loadPrefs, PREFS_WRITE_MS, savePrefs, SETTINGS_DEFAULTS } from "../lib/prefs";
-import type { Prefs, SortMode } from "../lib/prefs";
+import type { PanelId, Prefs, RightPanel, SortMode } from "../lib/prefs";
 import Editor from "./Editor";
 import Toasts from "./Toasts";
 import type { Toast } from "./Toasts";
@@ -29,9 +30,8 @@ const LINE_NUM_MAX = 20000;
 // 设置的默认值、可选项清单、存取逻辑都在 lib/prefs.ts —— 那里是唯一碰
 // localStorage["jsontool.prefs"] 的地方。这里只负责把它们接进组件状态。
 
-// 右侧面板的四个 id。它们同时是：注册表里的键、活动栏按钮的顺序、以及
-// `rightPanel` 的取值（外加 "none"，表示四个都收起）。
-type PanelId = "tree" | "history" | "help" | "settings";
+// 右侧面板的 id（PanelId / RightPanel）定义在 lib/prefs.ts：它们同时是注册表里的键、
+// 活动栏按钮的顺序、以及偏好的取值，而偏好那边的存量校验必须按同一份清单认值。
 
 export default function JsonTool() {
   // 偏好快照，**只读一次**，给下面几个 useState 当初值。
@@ -39,7 +39,10 @@ export default function JsonTool() {
   // 画出来的东西——不会出现「先按默认值画一帧、等 React 跑起来再跳一下」。
   // 这也是当初选纯客户端渲染的全部理由，别把 ssr:false 去掉。
   const [prefs] = useState(loadPrefs);
-  const [raw, setRaw] = useState("");
+  // 输入框正文。初值是**上次离开时的那一串**（lib/draft.ts），和 loadPrefs 一样是
+  // 惰性初始化——所以第一帧画出来就已经是恢复后的内容，不会先闪一帧空编辑器。
+  // 这正是 app/page.tsx 关掉 SSR 换来的东西：**别改成在 effect 里补一次 setRaw**。
+  const [raw, setRaw] = useState(loadDraft);
   const [indent, setIndent] = useState(prefs.indent);
   // 编辑器字号。只作用于左侧输入框（含行号），不影响右侧树和面板——
   // 这是代码编辑器里「字体大小」的通常含义。默认 15 对齐 body 的 font。
@@ -82,7 +85,11 @@ export default function JsonTool() {
   // 所以常量名跟着键走，不去制造「常量叫 SAVED_KEY、值却是 jsontool.history」那种别扭。
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [now, setNow] = useState(() => Date.now());
-  const [rightPanel, setRightPanel] = useState<"none" | PanelId>("tree");
+  // 右侧收起没、展开哪一项，**是偏好的一项、会落盘**，所以初值来自存下来的那份：
+  // 下次打开时还是你上次离开的样子。默认 "tree"。
+  // 它在 SETTINGS_DEFAULTS 里，但「恢复默认」**不**把它写回去——那个按钮就长在设置面板里，
+  // 一按就换面板等于把自己脚下那块地抽走。理由写在 lib/prefs.ts 那一段。
+  const [rightPanel, setRightPanel] = useState<RightPanel>(prefs.rightPanel);
   // 右侧面板宽度（百分比）。默认来自 SETTINGS_DEFAULTS = 左右 2:1。
   const [sideWidth, setSideWidth] = useState(prefs.sideWidth);
   const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -95,6 +102,11 @@ export default function JsonTool() {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
   const histIdRef = useRef(0);
+  // 草稿落盘用的三个 ref，见下面那段 effect。draftWrittenRef 的初值就是刚读出来的
+  // 那一串，于是挂载后第一次 effect 不会把同一份内容白写一遍。
+  const draftRef = useRef(raw);
+  const draftWrittenRef = useRef(raw);
+  const draftWarnedRef = useRef(false);
   const toastIdRef = useRef(0);
   const toastTimersRef = useRef<Map<number, number>>(new Map());
   // 退场计时器。键存在 == 这条已经在摘除队列里了，用它代替单独的「已标记」集合。
@@ -124,9 +136,10 @@ export default function JsonTool() {
   // **防抖是必须的，不是优化**：拖 splitter 时 sideWidth 每帧都在变，一次拖动能触发
   // 一两百次 setItem，而 localStorage 是同步 IO，不防抖拖起来会明显发顿。
   // 依赖是下面拼出来的那个对象——任何一项变了引用就变，effect 自然重跑；
-  // 也可以理解成「这五项就是一个整体，落盘时就该一起落」。
-  const prefsNow = useMemo((): Prefs => ({ indent, fontSize, showLineNums, sortMode, sideWidth }),
-    [indent, fontSize, showLineNums, sortMode, sideWidth]);
+  // 也可以理解成「这六项就是一个整体，落盘时就该一起落」。
+  // rightPanel 也在里面：点一下活动栏就改一次引用，防抖之后落一次盘，代价极小。
+  const prefsNow = useMemo((): Prefs => ({ indent, fontSize, showLineNums, sortMode, sideWidth, rightPanel }),
+    [indent, fontSize, showLineNums, sortMode, sideWidth, rightPanel]);
   useEffect(() => {
     const t = window.setTimeout(() => savePrefs(prefsNow), PREFS_WRITE_MS);
     return () => window.clearTimeout(t);
@@ -443,6 +456,58 @@ export default function JsonTool() {
     outTimersRef.current.clear();
   }, []);
 
+  // ---- 草稿落盘（输入框正文）----
+  // **和「保存记录」不是一回事，别把 pushHistory 挪到这儿来**：那边只有点「保存」才写，
+  // 而且是一份可增删的列表；这边是「编辑器上次离开时的样子」，只有一个槽位、覆盖式，
+  // 跟着输入自动更新。两者只是都往 localStorage 写而已。
+  //
+  // 先比一遍再写：兜底那一侧（pagehide / visibilitychange）会被反复触发，不比较的话
+  // 每次切标签都要把整篇正文重写一次。
+  const flushDraft = useCallback(() => {
+    const t = draftRef.current;
+    if (t === draftWrittenRef.current) return;
+    if (t.length > DRAFT_MAX_CHARS) return; // 超上限不写，提示在下面那条 effect 里给
+    if (saveDraft(t)) {
+      draftWrittenRef.current = t;
+    } else if (!draftWarnedRef.current) {
+      // 写失败基本只有配额满一种。**照样只报一次**：它跟着输入走，每次都报会在打字时连弹。
+      draftWarnedRef.current = true;
+      notify("内容没能记住：本地存储已满", "warning");
+    }
+  }, [notify]);
+
+  // 防抖，和偏好那条 effect 同构：正文一变就重新计时，停手 DRAFT_WRITE_MS 之后落一次盘。
+  useEffect(() => {
+    draftRef.current = raw;
+    if (raw.length > DRAFT_MAX_CHARS) {
+      // 超上限：不写。**本会话只提示一次**——这是跟着输入走的判定，每次都报会在打字过程中连弹。
+      // 「恢复出来的存量本身就超限」（旧版本写的、或者被人手改过）也走这条路：
+      // 内容照常显示，只是不再往回写。
+      if (!draftWarnedRef.current) {
+        draftWarnedRef.current = true;
+        notify("内容超过 " + fmtBytes(DRAFT_MAX_CHARS) + "，不再自动记住，请用「保存」", "warning");
+      }
+      return;
+    }
+    const t = window.setTimeout(flushDraft, DRAFT_WRITE_MS);
+    return () => window.clearTimeout(t);
+  }, [raw, flushDraft, notify]);
+
+  // 离页兜底，越过上面那个防抖窗口。挂两个事件是因为它们各管一段：
+  // visibilitychange 管「切走 / 切回 / 手机回桌面」，pagehide 管「关闭或导航离开」，
+  // 而 beforeunload 会弹确认框、且移动端常年不触发，不用它。
+  // 关掉 / 崩溃这类事情本来就不在 500ms 防抖窗口内，兜底就是给它们准备的。
+  useEffect(() => {
+    const onHide = () => { if (document.visibilityState === "hidden") flushDraft(); };
+    const onPageHide = () => flushDraft();
+    window.addEventListener("pagehide", onPageHide);
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      window.removeEventListener("pagehide", onPageHide);
+      document.removeEventListener("visibilitychange", onHide);
+    };
+  }, [flushDraft]);
+
   // 记一条保存记录。**只有点「保存」才会走到这里**——不做任何自动记录。
   // 用户点保存就一定留下一条：**不去重**（内容相同也照样新增），否则「点了保存却没反应」。
   // 裁剪只作用于更旧的条目，最新这条永远保留；localStorage 配额只有几 MB，
@@ -606,7 +671,9 @@ export default function JsonTool() {
     e.target.value = "";
   };
   // 恢复默认设置。只碰 SETTINGS_DEFAULTS 里那几项显示偏好（含分栏比例），
-  // **不动右侧当前开着的面板**：那是「我此刻在干什么」，不是偏好。
+  // **不动右侧当前开着的面板**——这条不再是「它不是偏好」，它现在是了（会落盘），
+  // 而是**位置**问题：「恢复默认」这个按钮就长在设置面板里，一按下去如果连面板本身也重置，
+  // 站着点它的人会被当场弹到树形视图，等于按钮把自己脚下那块地抽走了。
   // 存下来的那份不用单独清：上面那个 effect 会把默认值照常写回去，效果一样。
   // 一律给提示：几项本来就在默认值时屏幕上什么都不会变，不提示就像按钮坏了
   // （和 格式化 是同一条规矩）。

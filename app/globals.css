@@ -97,6 +97,21 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
 /* z-index 5 而不是 3：行号层是 3，层级打平时 DOM 靠后的会赢，而 .editor-nums 在 .editor-wrap 里，
    DOM 上排在 .pane-head 之后。取 3 的话下拉菜单和悬停提示都会被行号层盖住（号码和三角画在菜单上）。 */
 .pane-head { position: relative; z-index: 5; display: flex; align-items: center; gap: 8px; padding: 0 10px; min-height: 42px; border-bottom: 1px solid var(--line); background: var(--panel2); flex-wrap: wrap; }
+/* 工具栏那一排按钮的换行方式（.actions 全项目只有工具栏在用，所以这三条不会误伤别处）。
+   .actions 取 display:contents：它自己的盒子消失，里面的按钮直接变成 .pane-head 的 flex 项，
+   于是「从左排起的左按钮」和「从右排起的图标组」在同一行里抢位置、一起换行。
+   以前是两个盒子，宽度不够时右边整组被挤下去，于是出现
+   「左边一组占一行、右边一组再占一行」——哪怕那一行还空着大半个。
+   .tool-icons **保留**盒子：图标整组一起走（margin-left:auto 把它顶到最右），
+   五个图标拆成两半分列行首行尾，看着比整组下移更乱。
+   列间距归零：盒子没了，原属 .actions 的那条 gap:2px 也跟着没了，
+   由下面那条外边距接管，间距和以前分毫不差；行间距（换行后两排之间）仍是 8px 不变。
+   **用 margin-right 不用 margin-left**：换行后新一排的头一项若是挂 margin-left，
+   它会被推离容器左边缘 2px，两排的左边就对不齐了（实测 16 vs 14）。挂在右侧则每排都从 14 起，
+   而最后一颗按钮多的那 2px 落在自动外边距里，看不出来。 */
+.pane-head:has(> .actions) { column-gap: 0; }
+.pane-head > .actions { display: contents; }
+.pane-head > .actions > * { margin-right: 2px; }
 .pane-head > span:first-child { font-weight: 600; }
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
@@ -229,6 +244,12 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
    唯一的例外是 .act.on：活动栏里当前打开的那个面板用强调色，那是「选中态」而不是静息色。 */
 .tool-btn:hover:not(:disabled), .icon-btn:hover:not(:disabled), .search-icon:hover:not(:disabled), .menu-item:hover:not(:disabled), .twist:hover:not(:disabled), .hist-del:hover:not(:disabled), .toast-x:hover:not(:disabled) { color: var(--fg); background: rgba(76, 141, 255, .08); border-color: transparent; }
 .tool-btn:active:not(:disabled), .icon-btn:active:not(:disabled), .search-icon:active:not(:disabled), .menu-item:active:not(:disabled), .twist:active:not(:disabled), .hist-del:active:not(:disabled), .toast-x:active:not(:disabled) { color: var(--accent); background: rgba(76, 141, 255, .16); border-color: transparent; }
+/* 顶栏那个 GitHub 入口是**跳到站外的链接**，不是控件，按下去不该亮起强调色——
+   那圈蓝的含义是「这个按钮已被选中/激活」，对一个点完就离开本站的链接毫无意义。
+   它挂的正是 .icon-btn，所以要在这条按下规则之后把它单独摘出来。
+   悬停态**不动**：悬停只是「这儿能点」的提示，跟旁边那排图标按钮保持一致。
+   权重必须比上面那条高一级（多一个 .topbar-link），否则 (0,3,0) 打平后靠源码顺序也压不住。 */
+.icon-btn.topbar-link:active:not(:disabled) { color: var(--fg); background: rgba(76, 141, 255, .08); }
 /* 下拉项的「当前值」和「键盘/鼠标高亮」。
    这两条**必须排在上面那对 :hover/:active 之后**：选择器权重都是 (0,2,0)，靠源码顺序决胜负。
    放前面的话，鼠标一划过当前值那一项它就变回 --fg，"哪个是选中的"就看不出来了。

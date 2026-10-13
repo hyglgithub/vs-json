@@ -21,6 +21,7 @@
 // 它也是 lib/ 里唯一一个「改文案 = 改这个文件」的地方。
 
 import { BS, HIST_MAX, HIST_MAX_CHARS } from "./constants";
+import { DRAFT_MAX_CHARS } from "./draft";
 import { fmtBytes } from "./format";
 
 export type HelpSection = { id: string; title: string; items: string[] };
@@ -34,6 +35,8 @@ export const HELP_SECTIONS: HelpSection[] = [
       "没有数据时点击「示例」，会载入一份附带用法说明的示例 JSON。",
       "解析实时进行。JSON 不合法时输入框下方给出错误信息，修正后树形视图与统计立即恢复。",
       "工具栏末位的「清空」只清空输入框，不影响保存记录。",
+      // 上限从常量插值，不手写——同 HIST_MAX_CHARS 那句。
+      `关闭页面后再次打开，输入框会恢复上次的内容；超过 ${fmtBytes(DRAFT_MAX_CHARS)} 时不再记住。`,
     ],
   },
   {
@@ -113,7 +116,8 @@ export const HELP_SECTIONS: HelpSection[] = [
       // 和设置面板里那句同一个错：压缩根本用不到缩进（见 CLAUDE.md）。
       "缩进只影响格式化，Key 排序对格式化与压缩均生效；字体大小与行号只影响输入框的显示。",
       "「恢复默认」把上述四项连同分栏宽度一起重置。",
-      "这些偏好保存在当前浏览器的本地存储中，更换浏览器或清除站点数据后恢复默认值。",
+      // 右侧面板不在「恢复默认」的重置范围内（理由见 lib/prefs.ts），所以它只出现在这一条里。
+      "这些偏好连同右侧展开的面板都保存在当前浏览器的本地存储中，更换浏览器或清除站点数据后恢复默认值。",
     ],
   },
 ];
