@@ -11,10 +11,23 @@ import './globals.css';
 // 注意这里**没有** maximum-scale / user-scalable：那两样能顺手压掉 iOS 的聚焦缩放，
 // 代价是连用户自己的双指放大也一起禁掉。缩放是刚需（要看清一段 JSON），不能为了
 // 省事把它砍了——所以改成把输入框字号提到 16px 以上，见 globals.css 的手机那一段。
+// interactiveWidget: 'overlays-content' —— 手机输入法弹起时**不要重排页面**，直接盖上去。
+//
+// 三个取值里这个是唯一不动的：resizes-visual 只缩视觉视口，resizes-content 连布局视口
+// 一起缩（页面重排）。本应用是 height:100% 撑满的整屏工具，只要布局视口一缩，
+// 底部活动栏就会被顶到输入法上方、正文跟着变矮——用户的诉求正好相反。
+//
+// **只有 Chromium 认这个键**（Chrome / Edge / 各种安卓浏览器）。iOS Safari 忽略它，
+// 但 iOS 本来就不为键盘重排布局视口，行为已经是"盖上去"，所以两边表现一致。
+//
+// 代价说清楚：键盘盖住的那一块里，内容不再缩上来，浏览器也没法把插入点滚进可视区
+// （.app 是 overflow:hidden，页面本来就不可滚）。所以在正文**最底部**点一下开始打字时，
+// 插入点有可能被键盘挡住。真要遇到，退路是把这里改成 'resizes-content' 让页面重排。
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
+  interactiveWidget: 'overlays-content',
 };
 
 // 标签页上的文字就是 title。图标不在这里写 icons 字段——app/ 下的 icon.png /

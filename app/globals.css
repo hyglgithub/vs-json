@@ -48,7 +48,11 @@ button { font: inherit; }
    后果是被裁掉一块，而不是整个页面开始晃。
    注意固定定位的后代（.toasts、.sel-menu）不受影响——祖先没有 transform/filter，
    它们的包含块仍是视口，不会被这里裁到。 */
-.app { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+/* -webkit-tap-highlight-color: transparent —— 手机浏览器**默认**会给被点中的可点元素
+   压一层高亮（Android 上是蓝的），和这套自绘的悬停/按下反馈叠在一起，看着就是
+   「点完按钮变蓝了」。桌面端没有这个机制，所以只有手机上看得见。
+   本项目所有按钮的反馈都是自己画的（见下面那条按钮交互规范），这层默认高亮不要。 */
+.app { display: flex; flex-direction: column; height: 100%; overflow: hidden; -webkit-tap-highlight-color: transparent; }
 /* z-index 10：搜索框的悬停提示是从 .searchbar 里往下弹的（top:100%+7px），
    会伸进下面的 .main 区域。.searchbar 自己是 z-index 5，和 .pane-head 的 5 打平，
    而 .topbar 原本没有 z-index、不构成层叠上下文，于是两者在同一个上下文里比 DOM 顺序——
