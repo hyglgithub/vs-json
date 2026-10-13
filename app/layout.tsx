@@ -1,6 +1,21 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
 import './globals.css';
+
+// viewport 单独导出。App Router 会把它生成 <meta name="viewport">——**导出它会整个替换掉
+// Next 的默认值**，所以下面三个都必须写全：默认那条是 width=device-width, initial-scale=1。
+//
+// viewportFit: 'cover' 是给刘海的：不写它，安全区（safe-area-inset-*）在 iOS 上恒为 0，
+// globals.css 里那些 env() 就白写了。**它只负责让 env() 有值**，留白还得靠 CSS 那边自己加。
+//
+// 注意这里**没有** maximum-scale / user-scalable：那两样能顺手压掉 iOS 的聚焦缩放，
+// 代价是连用户自己的双指放大也一起禁掉。缩放是刚需（要看清一段 JSON），不能为了
+// 省事把它砍了——所以改成把输入框字号提到 16px 以上，见 globals.css 的手机那一段。
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+};
 
 // 标签页上的文字就是 title。图标不在这里写 icons 字段——app/ 下的 icon.png /
 // apple-icon.png 由 App Router 的文件约定自动挂上（连带 basePath 也由它拼对）。

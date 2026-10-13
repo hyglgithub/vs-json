@@ -1,7 +1,7 @@
 "use client";
 import type { PointerEvent as ReactPointerEvent } from "react";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, CSSProperties, DragEvent, ReactNode } from "react";
 
 
@@ -26,6 +26,11 @@ import TreePanel from "./panels/TreePanel";
 // 一个逻辑行一个 <div>，所以行数直接等于 DOM 节点数。超过这个数就不画行号了：
 // 输入框本身仍然正常，只是左边没有号码。别把它当成"性能优化"删掉。
 const LINE_NUM_MAX = 20000;
+
+// 「窄窗口」的分界，**必须和 globals.css 里那条 `@media (max-width: 900px)` 一致**。
+// CSS 在那条里把 .main 翻成网格、让右侧面板盖住正文；JS 这边只用它决定开局要不要
+// 展开面板（见 rightPanel 的初值）。两边对不上，表现是开局面板盖住正文、或者反过来。
+const NARROW_MQ = "(max-width: 900px)";
 
 // 设置的默认值、可选项清单、存取逻辑都在 lib/prefs.ts —— 那里是唯一碰
 // localStorage["jsontool.prefs"] 的地方。这里只负责把它们接进组件状态。
@@ -54,6 +59,8 @@ export default function JsonTool() {
   const [sortMode, setSortMode] = useState<SortMode>(prefs.sortMode);
   const [openMenu, setOpenMenu] = useState<"unicode" | "escape" | null>(null);
   const [menuLocked, setMenuLocked] = useState(false);
+  // 当前这个下拉是不是要往左展开（贴着按钮右边缘）。见下面的 useLayoutEffect。
+  const [menuFlip, setMenuFlip] = useState(false);
   const toggleMenu = (id: "unicode" | "escape") => {
     if (openMenu === id && menuLocked) {
       setOpenMenu(null);
@@ -75,6 +82,22 @@ export default function JsonTool() {
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [menuLocked]);
+
+  // 工具栏下拉默认从按钮左边缘**往右**展开，可 .pane 是 overflow:hidden——
+  // 按钮离窗格右边不足一个菜单宽时，菜单就伸出去被切掉（实测 390px 下 Unicode 菜单
+  // 超出窗格 37px、超出窗口 34px）。放不下就翻成右对齐，贴着按钮右边缘往左展开。
+  // 翻过去之后菜单右边缘正好落在按钮右边缘上，而按钮在窗格内，所以必然放得下，
+  // 不会来回翻；依赖只有 openMenu，也就不会再跑一轮。
+  // **useLayoutEffect 而不是 useEffect**：它跑在绘制之前，「先画在右边、再跳到左边」
+  // 那一帧不会出现在屏幕上（设置面板的下拉翻转用的是同一条理由）。
+  useLayoutEffect(() => {
+    if (!openMenu) return;
+    const wrap = menuWrapRefs.current.get(openMenu);
+    const menu = wrap && wrap.querySelector(".menu");
+    const pane = wrap && wrap.closest(".pane");
+    if (!menu || !pane) return;
+    setMenuFlip(menu.getBoundingClientRect().right > pane.getBoundingClientRect().right - 8);
+  }, [openMenu]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set(["$"]));
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -89,8 +112,14 @@ export default function JsonTool() {
   // 下次打开时还是你上次离开的样子。默认 "tree"。
   // 它在 SETTINGS_DEFAULTS 里，但「恢复默认」**不**把它写回去——那个按钮就长在设置面板里，
   // 一按就换面板等于把自己脚下那块地抽走。理由写在 lib/prefs.ts 那一段。
-  const [rightPanel, setRightPanel] = useState<RightPanel>(prefs.rightPanel);
+  // 窄窗口下面板是**覆盖式**的（整块盖住正文），所以开局一律不展开：
+  // 一进来就是一整屏树形视图、编辑器一个字都看不见，比"没记住上次开哪个"糟糕得多。
+  // 宽窗口照旧记忆——那边面板和正文并排，开着不挡事，记忆才有意义。
+  // 这个断点必须和 globals.css 里那条 `@media (max-width: 900px)` 一致。
+  const [rightPanel, setRightPanel] = useState<RightPanel>(() =>
+    window.matchMedia(NARROW_MQ).matches ? "none" : prefs.rightPanel);
   // 右侧面板宽度（百分比）。默认来自 SETTINGS_DEFAULTS = 左右 2:1。
+  // **只有宽窗口需要它**：窄窗口下没有分栏，面板是覆盖式的。
   const [sideWidth, setSideWidth] = useState(prefs.sideWidth);
   const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
@@ -101,6 +130,8 @@ export default function JsonTool() {
   const numsRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
+  // 两个工具栏下拉的 .menu-wrap，给下面那个「往右放不下就翻到左边」的 effect 量尺寸用。
+  const menuWrapRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const histIdRef = useRef(0);
   // 草稿落盘用的三个 ref，见下面那段 effect。draftWrittenRef 的初值就是刚读出来的
   // 那一串，于是挂载后第一次 effect 不会把同一份内容白写一遍。
@@ -116,6 +147,8 @@ export default function JsonTool() {
   const repeatDelayRef = useRef<number | null>(null);
   const repeatTickRef = useRef<number | null>(null);
 
+  // 分隔条只在宽窗口存在（窄窗口下面板是覆盖式的，见 globals.css 的 ≤900px 那段），
+  // 所以这里只有横着一个方向：分隔条在正文**右边**，往左拖 = 面板变宽。
   const onSplitDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
     dragRef.current = { startX: e.clientX, startW: sideWidth };
@@ -783,19 +816,19 @@ export default function JsonTool() {
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2" /><polyline points="2 17 12 22 22 17" /><polyline points="2 12 12 17 22 12" /></svg>
                 示例
               </button>
-              <div className="menu-wrap" onMouseEnter={() => { if (!menuLocked) setOpenMenu("unicode"); }} onMouseLeave={() => { if (!menuLocked) setOpenMenu(null); }}>
+              <div className="menu-wrap" ref={(el) => { if (el) menuWrapRefs.current.set("unicode", el); else menuWrapRefs.current.delete("unicode"); }} onMouseEnter={() => { if (!menuLocked) setOpenMenu("unicode"); }} onMouseLeave={() => { if (!menuLocked) setOpenMenu(null); }}>
                 <button className="tool-btn" onClick={() => toggleMenu("unicode")}>Unicode<span className="caret" /></button>
                 {openMenu === "unicode" && (
-                  <div className="menu">
+                  <div className={"menu" + (menuFlip ? " flip" : "")}>
                     <button className="menu-item" onClick={() => { replaceAll(escapeUnicode(raw)); setOpenMenu(null); setMenuLocked(false); }}>中文转 Unicode</button>
                     <button className="menu-item" onClick={() => { replaceAll(unescapeUnicode(raw)); setOpenMenu(null); setMenuLocked(false); }}>Unicode 转中文</button>
                   </div>
                 )}
               </div>
-              <div className="menu-wrap" onMouseEnter={() => { if (!menuLocked) setOpenMenu("escape"); }} onMouseLeave={() => { if (!menuLocked) setOpenMenu(null); }}>
+              <div className="menu-wrap" ref={(el) => { if (el) menuWrapRefs.current.set("escape", el); else menuWrapRefs.current.delete("escape"); }} onMouseEnter={() => { if (!menuLocked) setOpenMenu("escape"); }} onMouseLeave={() => { if (!menuLocked) setOpenMenu(null); }}>
                 <button className="tool-btn" onClick={() => toggleMenu("escape")}>转义<span className="caret" /></button>
                 {openMenu === "escape" && (
-                  <div className="menu">
+                  <div className={"menu" + (menuFlip ? " flip" : "")}>
                     <button className="menu-item" onClick={() => { replaceAll(escapeText(raw)); setOpenMenu(null); setMenuLocked(false); }}>添加 {BS} 转义</button>
                     <button className="menu-item" onClick={() => { replaceAll(unescapeText(raw)); setOpenMenu(null); setMenuLocked(false); }}>去除 {BS} 转义</button>
                   </div>

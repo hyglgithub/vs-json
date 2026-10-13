@@ -50,7 +50,11 @@ export default function Editor(props: EditorProps) {
   return (
     <div className={"editor-wrap" + (folding ? " folded" : "") + (gutterShown ? " guttered" : "")} style={style}>
       <pre className="editor-back" ref={backRef} aria-hidden="true">{foldedText}</pre>
-      <textarea ref={editorRef} className="editor-front" value={raw} onChange={(e) => onChange(e.target.value)} onScroll={(e) => { const st = e.currentTarget.scrollTop; const sl = e.currentTarget.scrollLeft; const bk = backRef.current; if (bk) { bk.scrollTop = st; bk.scrollLeft = sl; } const mk = marksRef.current; if (mk) { mk.scrollTop = st; mk.scrollLeft = sl; } const nm = numsRef.current; if (nm) nm.scrollTop = st; }} spellCheck={false} aria-label="JSON 输入" />
+      {/* spellCheck / autoCorrect / autoCapitalize / autoComplete 四个**都要关**。
+          前两个是桌面上的老问题（拼写红线画在 JSON 上），后两个是手机上的**数据损坏**：
+          iOS 默认会首字母大写、还会把直引号替换成弯引号，写进正文就不是合法 JSON 了。
+          spellCheck={false} 挡不住这两条，它们是各自独立的开关。 */}
+      <textarea ref={editorRef} className="editor-front" value={raw} onChange={(e) => onChange(e.target.value)} onScroll={(e) => { const st = e.currentTarget.scrollTop; const sl = e.currentTarget.scrollLeft; const bk = backRef.current; if (bk) { bk.scrollTop = st; bk.scrollLeft = sl; } const mk = marksRef.current; if (mk) { mk.scrollTop = st; mk.scrollLeft = sl; } const nm = numsRef.current; if (nm) nm.scrollTop = st; }} spellCheck={false} autoCorrect="off" autoCapitalize="off" autoComplete="off" aria-label="JSON 输入" />
       {/* 折叠期间不做搜索高亮：命中位置是按 raw 的偏移算的，折叠后行号已经重排，
           硬套上去只会画错地方。留空层是为了保住 ref，搜索滚动那个 effect 还要用它。 */}
       <pre className="editor-marks" ref={marksRef} aria-hidden="true">{folding ? "" : highlightRaw}</pre>

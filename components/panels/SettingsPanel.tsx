@@ -57,7 +57,10 @@ export default function SettingsPanel(props: {
         </div>
         <div className="setting">
           <span className="setting-title">字体大小</span>
-          <span className="setting-desc">只作用于左侧输入框，含行号与折叠三角。</span>
+          {/* 手机那半句对应 globals.css 的 `@media (max-width: 720px)`：
+              四层统一取 max(16px, --editor-font)，低于 16px 会被 iOS 聚焦时放大整页。
+              这段说明和 lib/help.ts 的「设置」一节是**两份**，改一处要 grep 另一处。 */}
+          <span className="setting-desc">只作用于左侧输入框，含行号与折叠三角。窄窗口下最小 16px，更小的值不生效。</span>
           <Select label="字体大小" value={String(fontSize)} onChange={(v) => onFontSize(Number(v))}
             options={FONT_SIZES.map((n) => ({ value: String(n), label: n + " px" }))} />
         </div>

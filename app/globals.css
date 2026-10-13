@@ -16,10 +16,21 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
+/* 高度链走 html → body → .app 三级 100%，**量的是 html**。
+   手机上的坑：`height: 100%` 拿到的是初始包含块（＝地址栏占着位时的**小**视口），
+   而 `100vh` 拿的是地址栏收起时的**大**视口。两者差一个地址栏的高度，于是
+   `.app` 比 body 高、文档多出一截可以上下拖。
+   用 100dvh 量 html 就不会打架：地址栏怎么收放，三级一起跟着变。
+   写成两条是**回退**：不认识 dvh 的浏览器忽略后一条，留前一条 100vh。 */
+html { height: 100vh; height: 100dvh; }
 body {
   background: var(--bg);
   color: var(--fg);
   font: 15px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* iOS 横竖屏切换时会把正文按"可读性"放大，字号一变大，四层编辑器的换行点就分叉了。
+     100% 是"别动我的字号"。 */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 button { font: inherit; }
 * { scrollbar-width: thin; scrollbar-color: #39415a transparent; }
@@ -29,13 +40,24 @@ button { font: inherit; }
 *::-webkit-scrollbar-thumb:hover { background: #4a5474; background-clip: padding-box; }
 *::-webkit-scrollbar-corner { background: transparent; }
 
-.app { display: flex; flex-direction: column; height: 100vh; }
+/* overflow: hidden 是**结构性的保证**：应用外壳永远不该出现滚动条，
+   文档高度必须恒等于视口高度。它的真正作用是兜住「有东西伸出应用之外」这类意外——
+   最典型的就是悬停提示框（绝对定位、包含块是初始包含块），底部那几个按钮的提示
+   曾经把文档撑高 27px，屏幕上表现为整个应用能上下拖。
+   提示本身在窄窗口已经改到按钮上方，但**这条留着**：以后新加的东西再伸出去，
+   后果是被裁掉一块，而不是整个页面开始晃。
+   注意固定定位的后代（.toasts、.sel-menu）不受影响——祖先没有 transform/filter，
+   它们的包含块仍是视口，不会被这里裁到。 */
+.app { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
 /* z-index 10：搜索框的悬停提示是从 .searchbar 里往下弹的（top:100%+7px），
    会伸进下面的 .main 区域。.searchbar 自己是 z-index 5，和 .pane-head 的 5 打平，
    而 .topbar 原本没有 z-index、不构成层叠上下文，于是两者在同一个上下文里比 DOM 顺序——
    .main 在后，面板就把提示盖掉了。给 .topbar 一个层叠上下文，整条顶栏连同它的提示一起抬起来。
    10 这个值：低于 .toasts(60)，高于 .pane-head(5) 和所有编辑器层。 */
-.topbar { position: relative; z-index: 10; display: flex; align-items: center; gap: 8px; padding: 5px 14px; min-height: 54px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+/* 安全区（刘海 / 圆角 / Home 指示条）**必须逐边写在简写之后**：
+   env() 是后面才有的，老浏览器整条声明作废，于是它回落到上面简写里的值，
+   而不是把 padding 整个丢掉。viewport-fit=cover 在 layout.tsx，两边要一起才生效。 */
+.topbar { position: relative; z-index: 10; display: flex; align-items: center; gap: 8px; padding: 5px 14px; min-height: 54px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; padding-top: calc(5px + env(safe-area-inset-top, 0px)); padding-left: calc(14px + env(safe-area-inset-left, 0px)); padding-right: calc(14px + env(safe-area-inset-right, 0px)); }
 .brand { display: flex; align-items: center; gap: 8px; flex: none; margin-right: 4px; color: var(--accent); }
 .brand-name { color: var(--fg); font-size: 16px; font-weight: 600; letter-spacing: .3px; }
 .actions { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
@@ -80,9 +102,11 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
 .input:hover { border-color: var(--line); }
 .input:focus { outline: none; border-color: var(--accent); }
 .input option { background: var(--panel2); color: var(--fg); }
-.main { display: flex; flex: 1; min-height: 0; gap: 1px; padding: 3px; background: var(--panel); }
+.main { display: flex; flex: 1; min-height: 0; gap: 1px; padding: 3px; background: var(--panel); padding-left: calc(3px + env(safe-area-inset-left, 0px)); padding-right: calc(3px + env(safe-area-inset-right, 0px)); padding-bottom: calc(3px + env(safe-area-inset-bottom, 0px)); }
 .main > .pane { flex: 1; min-width: 0; }
-.splitter { width: 4px; flex: none; cursor: col-resize; background: transparent; border-radius: 2px; }
+/* touch-action: none —— 触摸设备上按住拖动时，别让浏览器把这串手势判成滚动。
+   桌面端看不出区别（鼠标不发这个信号），但没有它，平板上的分隔条拖不动。 */
+.splitter { position: relative; width: 4px; flex: none; cursor: col-resize; background: transparent; border-radius: 2px; touch-action: none; }
 .splitter:hover, .splitter:active { background: var(--accent); }
 .activity { width: 46px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
 .side-body > .pane { border-radius: 8px 0 0 8px; border-right: 0; }
@@ -218,6 +242,12 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
 .caret { display: inline-block; width: 0; height: 0; margin-left: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 4px solid currentColor; vertical-align: middle; }
 .actions .menu::before { content: ""; position: absolute; top: -8px; left: 0; right: 0; height: 8px; }
 .menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; min-width: 160px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,.45); display: flex; flex-direction: column; }
+/* 往右展开会超出窗格时改成往左展开（对齐到按钮右边缘）。
+   .pane 是 overflow:hidden，菜单伸出去就被切掉——实测 390px 下 Unicode 菜单
+   超出窗格 37px、超出窗口 34px。翻过来之后它右边缘落在按钮右边缘上，
+   按钮本来就在窗格里面，所以必然放得下，不会来回翻。
+   加这个类的时机在 JsonTool 的 useLayoutEffect 里（绘制前量、绘制前改，不闪）。 */
+.menu.flip { left: auto; right: 0; }
 .menu-item { text-align: left; background: none; border: 0; color: var(--muted); padding: 7px 10px; border-radius: 6px; cursor: pointer; white-space: nowrap; font: inherit; }
 
 /* ---- 设置面板的下拉 ----
@@ -260,13 +290,22 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
    只给「纯图标」按钮挂 data-tip；有文字（图标+文字或纯文字）的按钮不加，避免废话。
    提示挂在按钮下方，贴右边缘的按钮改为向左展开，防止被 .pane 的 overflow:hidden 裁掉。 */
 [data-tip] { position: relative; }
+/* **display 而不是 opacity 来藏**。原先写的是 opacity:0 + transition，看着等价，其实
+   提示框一直在参与布局：它是绝对定位的，包含块又是初始包含块（沿途祖先都没有定位），
+   于是底部活动栏那几个按钮的提示框（挂在按钮下方 +7px）伸到了视口外面，
+   把整个文档撑高了 27px —— 桌面端只是能多滚一点，手机上就是整个应用能上下拖。
+   实测：把这条改成 display:none 之后，文档高从 871 掉回 844，正好等于视口高。
+   代价是 display 不能过渡，所以淡入改用 animation 做，**延迟也一并搬过去**：
+   .28s 那个延迟是防「鼠标扫过一排按钮时提示乱闪」的，不能丢。
+   backwards 让它在延迟期间保持 from 状态（opacity 0），而不是先跳出来再淡入。 */
 [data-tip]::after {
   content: attr(data-tip); position: absolute; top: calc(100% + 7px); left: 50%; transform: translateX(-50%); z-index: 40;
   padding: 5px 9px; background: var(--panel2); color: var(--fg); border: 1px solid var(--border); border-radius: 6px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, .45); font-size: 12.5px; line-height: 1.35; white-space: nowrap;
-  pointer-events: none; opacity: 0; transition: opacity .12s ease;
+  pointer-events: none; display: none;
 }
-[data-tip]:hover::after { opacity: 1; transition-delay: .28s; }
+[data-tip]:hover::after { display: block; animation: tip-in .12s ease .28s backwards; }
+@keyframes tip-in { from { opacity: 0; } to { opacity: 1; } }
 .tool-icons [data-tip]::after, .activity [data-tip]::after, .hist-del[data-tip]::after, .topbar-link[data-tip]::after { left: auto; right: 0; transform: none; }
 .twist { width: 16px; flex: none; background: none; border: 0; border-radius: 4px; color: var(--muted); cursor: pointer; padding: 0; text-align: center; }
 .idx { color: var(--muted); }
@@ -363,7 +402,7 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
    所以已有消息的位置纹丝不动，只有新的一条出现在它们上面；反过来（column）每来一条都会把
    上面所有消息往上顶一次。
    间距用每条自己的 margin-top，不用容器的 gap —— 退场时要把这条间距一起收掉，gap 收不了。 */
-.toasts { position: fixed; right: 16px; bottom: 16px; z-index: 60; display: flex; flex-direction: column-reverse; align-items: flex-end; pointer-events: none; }
+.toasts { position: fixed; right: 16px; bottom: 16px; z-index: 60; display: flex; flex-direction: column-reverse; align-items: flex-end; pointer-events: none; right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
 /* 小圆角矩形 + 分型浅色底，对齐 ElMessage 的观感。
    底色的做法：--panel2 打底（气泡浮在编辑器上方，不能透出下面的字），再叠一层同色 13% 的渐变。
    文字与图标继承 .toast 的 color，所以每型只需一条规则把 --tint / color / border-color 一起给出。
@@ -387,11 +426,72 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
 .toast.leaving { animation: toast-out .2s ease-in forwards; pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { .toast, .toast.leaving { animation: none; } }
 .hist-del { flex: none; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; background: none; border: 1px solid transparent; border-radius: 6px; color: var(--muted); cursor: pointer; }
+/* ================= 窄窗口 / 手机 =================
+   这一档只修「坏掉的」，不改交互形态。两个断点：
+     · 960px —— 收掉顶栏的统计信息
+     · 900px —— 已有的布局翻转（.main 变一列、活动栏横排、分隔条转竖）
+     · 720px —— 搜索框单独占一行、输入框字号抬到 16px
+   断点各不相同是有原因的，下面每条都写了为什么。 */
+
+/* 统计信息是顶栏里唯一能不要的东西，而它正是把品牌撑宽的元凶：
+   「节点 25 · 深度 4 · 834 字节」一出来，.brand 从 160px 涨到 295px。
+   搜索框是**绝对居中**的（见 .searchbar 那段注释），宽屏下品牌够不到它，
+   窗口一窄两者就叠上了——实测 390px 下重叠 141px，带统计时 276px。
+   960 这个数是从「品牌 295px 且不碰居中搜索框」倒推的：需要窗口 > 942px。 */
+@media (max-width: 960px) {
+  .topbar-stats { display: none; }
+}
+
 @media (max-width: 900px) {
-  .main { flex-direction: column; }
+  /* 窄窗口下右侧面板**盖住**正文，而不是和它挤在一列里各占一半。
+     原来是上下分栏 + 一根横的分隔条，试过，两个问题：正文被压到一两百像素高
+     （实测 360×640 只剩 128px），而且竖着拖的手感反直觉。用户的原话是
+     「宽度小时直接去掉拖动逻辑，直接让右侧窗口覆盖掉整个左侧窗口」。
+     做法是 .main 改网格：正文和面板放进**同一个格子**，面板压在上面。
+     **正文不能用 display:none 藏**——那会把它从布局里摘掉，textarea 的 scrollTop
+     会在重新出现时归零，关掉面板就跳回文档开头。visibility:hidden 保留布局盒子，
+     滚动位置不动，同时把它从 Tab 序列里摘出去。 */
+  .main { display: grid; grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+  .main > .pane, .side-body { grid-area: 1 / 1; min-height: 0; }
+  .main:has(> .side-body) > .pane { visibility: hidden; }
+  .side-body { width: 100% !important; z-index: 1; }
+  /* 覆盖模式下没有可拖的东西了，分隔条整个不渲染（它只在面板开着时才在 DOM 里，
+     所以这一条同时也意味着「窄窗口不可能拖」）。 */
   .splitter { display: none; }
-  .side-body { width: 100% !important; height: 50%; }
-  .activity { width: 100%; height: 46px; flex-direction: row; justify-content: center; padding: 0; }
+  /* 活动栏横排之后它在**最底下**，提示框默认挂在按钮下方（top:100%+7px），
+     一按就伸出窗口外：文档被撑高一截，屏幕上就是「底部凭空多出一段空白」，
+     全屏也就破了。挪到按钮**上方**，它就落在应用里面了。
+     注意这只解决了「显示出来时」的溢出——不显示时的溢出是另一回事，
+     见 [data-tip]::after 那条 display:none 的注释。 */
+  .activity [data-tip]::after { top: auto; bottom: calc(100% + 7px); }
+  .activity { grid-area: 2 / 1; width: 100%; height: 46px; flex-direction: row; justify-content: center; padding: 0; }
   .side-body > .pane { border-radius: 8px; }
   .side-body + .activity { margin-left: 0; margin-top: -1px; border: 1px solid var(--line); border-top: 0; border-radius: 0 0 8px 8px; }
+}
+
+@media (max-width: 720px) {
+  /* 再窄连「品牌 + 居中搜索框 + GitHub」都放不下了（960 那条只管统计信息，
+     此时需要窗口 > 672px）。做法是把左边**整块**收掉——图标 + 标题 + 统计一起，
+     位置全让给搜索框。
+     **不要改成「把搜索框挤到第二行、品牌留着」**：试过，用户否了——顶栏白白高一倍
+     （54px → 93px），而手机浏览器的地址栏本来就显示标题和图标，应用里再来一份是重复的。
+     收掉品牌之后，搜索框从绝对居中改回普通 flex 项，和 GitHub 链接同处一行。
+     改成 static 之后 z-index:5 失效，但没关系——整个 .topbar 是个 z-index:10 的
+     层叠上下文，提示照样压在 .main 上面，那段注释讲的前提没变。 */
+  .brand { display: none; }
+  /* flex-basis 必须是 **0**，不能是 auto。auto 会拿内容宽度（那个 width:100% 的搜索胶囊
+     撑出来的宽度）当基准，而 .topbar 是 flex-wrap: wrap —— 换行是在**收缩之前**、
+     按基准尺寸判定的，于是基准一大，它不会缩，而是整块换到第二行去。
+     实测：auto 时 390px 下搜索框独占一行、顶栏 93px；改成 0 之后和 GitHub 同处一行、54px。 */
+  .searchbar { position: static; top: auto; left: auto; transform: none; flex: 1 1 0; min-width: 0; }
+  .search-pill { width: 100%; max-width: none; }
+
+  /* 16px 是 iOS 的阈值：低于它，Safari 一聚焦就把整页放大。
+     输入框有两个——搜索框固定 14px，正文走用户选的 --editor-font（12–20px）。
+     正文这里取 max()：**下限抬到 16px，上限不动**，所以选 17–20 的人不受影响，
+     选 12–15 的在手机上会被顶到 16。这是有意的取舍——12px 在手机上本来也读不了，
+     而 iOS 那个自动放大每点一次输入框就来一次，比字号偏大难忍得多。
+     四层必须一起改（下面这条一条列全），否则层的盒子度量分叉、光标和选区会滑开。 */
+  .editor-back, .editor-front, .editor-marks, .editor-nums { font-size: max(16px, var(--editor-font, 15px)); }
+  .search-input { font-size: 16px; }
 }
