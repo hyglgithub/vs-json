@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
+import { PREFS_KEY } from '../lib/prefs';
 import './globals.css';
 
 // viewport 单独导出。App Router 会把它生成 <meta name="viewport">——**导出它会整个替换掉
@@ -85,9 +86,30 @@ export const metadata: Metadata = {
   },
 };
 
+// 主题要在第一次绘制之前就挂到 <html> 上。JsonTool 里的 useLayoutEffect 也能做到
+// 「挂上之后不缺帧」，但它要等 JS 加载完；在那之前页面是一片没有内容的底色。
+// 默认是浅色，而 :root 的兜底配色是深色——不提前读一次，每次打开都会先闪一帧深色。
+// 所以这里用一段内联脚本提前读一次。
+//
+// 这是全项目**唯一**在 React 之外读 localStorage 的地方，只认 theme 一个字段：
+// 没有存储、JSON 坏了、值不认识，都落到默认的浅色。偏好的正式读取、校验和
+// 迁移仍然全在 lib/prefs.ts，这里不参与，也不改键名以外的东西。
+//
+// 之所以能这么干，而偏好（分栏宽度、字号）不能：那些值最终写成**内联样式**，
+// 内联样式优先级高于 :root 上的变量，脚本改不动；主题只切换 data-theme 这一个属性。
+const THEME_BOOT =
+  'try{var p=JSON.parse(localStorage.getItem(' + JSON.stringify(PREFS_KEY) + ')||"{}");' +
+  'document.documentElement.dataset.theme=p&&p.theme==="dark"?"dark":"light"}' +
+  'catch(e){document.documentElement.dataset.theme="light"}';
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang='zh-CN'>
+    // suppressHydrationWarning：内联脚本在 React 接管之前改了 <html> 的属性，
+    // 这只是主题引导，不是渲染不一致。
+    <html lang='zh-CN' suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
+      </head>
       <body>{children}</body>
     </html>
   );

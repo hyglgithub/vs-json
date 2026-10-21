@@ -1,30 +1,37 @@
-import { FONT_SIZES, INDENT_STEPS } from "../../lib/prefs";
-import type { SortMode } from "../../lib/prefs";
+import { FONT_SIZES, INDENT_STEPS, THEMES } from "../../lib/prefs";
+import type { SortMode, Theme } from "../../lib/prefs";
 import Select from "../Select";
+
+// 取值清单来自 lib/prefs 的 THEMES（校验存量用的也是它），这里只补界面上的中文名，
+// 这样不会出现「界面能选、存量校验不认」的情况。
+const THEME_LABELS: Record<Theme, string> = { dark: "深色", light: "浅色" };
 
 // 设置面板。结构照 VS Code 的设置页：**一项一块，标题 → 说明 → 控件，三者左对齐**。
 // 外层**不用 <label>**：<label> 会把内部任何一次点击转发给它关联的控件，
 // 而下拉弹层里的选项也在这一块里，点选项会连带把触发按钮再点一次、菜单立刻重新弹开。
 // 改用 aria-label 给控件命名。
 //
-// 控件顺序：缩进 / Key 排序 / 字体大小 / 行号。前两项是**格式化·压缩那一组**的选项，
-// 后两项是**编辑器显示**的偏好，所以挨着分成两段。任何按序号定位的脚本都依赖这个顺序。
+// 控件顺序：主题 / 缩进 / Key 排序 / 字体大小 / 行号。主题是最全局的显示偏好，单独排最前；
+// 中间两项是**格式化·压缩那一组**的选项，后两项是**编辑器显示**的偏好。
+// 任何按序号定位的脚本都依赖这个顺序。
 //
 // 每条说明都在两个地方各写了一份——这里的 .setting-desc，和 lib/help.ts 的「设置」一节。
 // **两份谁都不 import 谁，改一处必须 grep 另一处。**「缩进在压缩时也生效」那句错话
 // 就是两边一起错的。
 export default function SettingsPanel(props: {
+  theme: Theme;
   indent: number;
   sortMode: SortMode;
   fontSize: number;
   showLineNums: boolean;
+  onTheme: (t: Theme) => void;
   onIndent: (n: number) => void;
   onSortMode: (m: SortMode) => void;
   onFontSize: (n: number) => void;
   onShowLineNums: (b: boolean) => void;
   onReset: () => void;
 }) {
-  const { indent, sortMode, fontSize, showLineNums, onIndent, onSortMode, onFontSize, onShowLineNums, onReset } = props;
+  const { theme, indent, sortMode, fontSize, showLineNums, onTheme, onIndent, onSortMode, onFontSize, onShowLineNums, onReset } = props;
   return (
     <div className="pane">
       <div className="pane-head">
@@ -36,6 +43,13 @@ export default function SettingsPanel(props: {
         </button>
       </div>
       <div className="settings">
+        <div className="setting">
+          <span className="setting-title">主题</span>
+          {/* 和 lib/help.ts 的「设置」一节是两份，改一处 grep 另一处。 */}
+          <span className="setting-desc">深色或浅色的界面配色，只影响显示，不影响内容。</span>
+          <Select label="主题" value={theme} onChange={(v) => onTheme(v as Theme)}
+            options={THEMES.map((t) => ({ value: t, label: THEME_LABELS[t] }))} />
+        </div>
         <div className="setting">
           <span className="setting-title">缩进</span>
           {/* 只对**格式化**有效：压缩走的是 reformatJson(raw, indent, false)，

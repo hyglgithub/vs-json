@@ -1,3 +1,9 @@
+/* ---- 主题 ----
+   配色全部走变量。深色是 :root 的兜底值（引导脚本没跑、或 <html> 上没有 data-theme 时用这套），
+   浅色只覆盖这一组变量，不另写一套规则——见下面 :root[data-theme="light"]。
+   用户的默认值是浅色，由 SETTINGS_DEFAULTS.theme 和 app/layout.tsx 的引导脚本一起决定。
+   带 -rgb 后缀的是同名语义色的 RGB 三元组：半透明底色 / 描边写成
+   rgba(var(--accent-rgb), .08)，换主题时浓淡跟着色相一起走，不用逐条改规则。 */
 :root {
   color-scheme: dark;
   --bg: #0f1116;
@@ -13,6 +19,58 @@
   --err: #ff6b6b;
   --deep: #0a0c11;
   --line: #333b4d;
+  --accent-rgb: 76, 141, 255;
+  --str-rgb: 154, 230, 160;
+  --num-rgb: 240, 180, 107;
+  --err-rgb: 255, 107, 107;
+  --muted-rgb: 139, 147, 167;
+  /* 滚动条。* 上的 scrollbar-color 和 ::-webkit-scrollbar-thumb 各用一次。 */
+  --scroll: #39415a;
+  --scroll-hover: #4a5474;
+  /* 阴影。深色底上 45% 的黑是「浮起来」，浅色底上同样浓度只会发脏，所以浅色另给一组。 */
+  --shadow: rgba(0, 0, 0, .45);
+  --shadow-soft: rgba(0, 0, 0, .35);
+  /* 树形视图的层级连接线。 */
+  --tree-line: rgba(120, 150, 200, .25);
+  /* 下拉箭头。**必须是一整个 url() 变量**：data URI 里的颜色拿不到 currentColor，
+     只能按主题各写一份；写成变量后，改主题只需要换这一个值。 */
+  --chev: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b93a7' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+}
+
+/* ---- 浅色主题 ----
+   变量挂在 <html data-theme="light"> 上：app/layout.tsx 的内联引导脚本在样式生效前就挂好，
+   JsonTool 的 useLayoutEffect 负责之后随设置切换，所以连 JS 加载期间的底色都是对的。
+   **color-scheme 必须一起换**：原生控件、滚动条、焦点环按它选深浅。
+   浅色不是把深色反相：--panel / --panel2 在深色里比 --bg 亮，浅色里要比 --bg 暗一点点，
+   层级关系才是反过来的。语义色都选了在白底上对比度 ≥ 4.5 的深色值。 */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --panel: #f4f5f8;
+  --panel2: #eceef4;
+  --border: #d9dde6;
+  --fg: #1f2330;
+  /* 比常见的 #667085 再深一档：那档在白底上够读，但面板底色是 --panel2，
+     12.5px 的说明文字压上去只有 4.3:1。 */
+  --muted: #5f6878;
+  --accent: #1e56d6;
+  --str: #197a3a;
+  --num: #a15c00;
+  --bool: #7a3ee8;
+  --err: #d92d20;
+  --deep: #f2f3f6;
+  --line: #c6ccd8;
+  --accent-rgb: 30, 86, 214;
+  --str-rgb: 25, 122, 58;
+  --num-rgb: 161, 92, 0;
+  --err-rgb: 217, 45, 32;
+  --muted-rgb: 95, 104, 120;
+  --scroll: #c6ccd8;
+  --scroll-hover: #aeb6c5;
+  --shadow: rgba(15, 23, 42, .16);
+  --shadow-soft: rgba(15, 23, 42, .08);
+  --tree-line: rgba(100, 116, 139, .30);
+  --chev: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235f6878' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
@@ -33,11 +91,11 @@ body {
   text-size-adjust: 100%;
 }
 button { font: inherit; }
-* { scrollbar-width: thin; scrollbar-color: #39415a transparent; }
+* { scrollbar-width: thin; scrollbar-color: var(--scroll) transparent; }
 *::-webkit-scrollbar { width: 10px; height: 10px; }
 *::-webkit-scrollbar-track { background: transparent; }
-*::-webkit-scrollbar-thumb { background: #39415a; border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
-*::-webkit-scrollbar-thumb:hover { background: #4a5474; background-clip: padding-box; }
+*::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:hover { background: var(--scroll-hover); background-clip: padding-box; }
 *::-webkit-scrollbar-corner { background: transparent; }
 
 /* overflow: hidden 是**结构性的保证**：应用外壳永远不该出现滚动条，
@@ -83,13 +141,13 @@ button { font: inherit; }
 /* 下拉的按钮嵌在 .sel 里，不是 .setting 的直接子元素，所以宽度要挂在 .sel 上。
    两者共用同一条尺寸规则，收起态的观感才和输入框完全一致。 */
 .setting > .input, .setting > .sel { margin-top: 8px; width: 100%; max-width: 320px; }
-/* 布尔项：一个方框 + 说明文字。方框自己画，原生 checkbox 在深色下是浅色方块，
-   和这套配色对不上。 */
+/* 布尔项：一个方框 + 说明文字。方框自己画——原生 checkbox 的观感由系统决定，
+   深浅两个主题下都和这套配色对不上。 */
 .setting-check { display: flex; align-items: flex-start; gap: 8px; margin-top: 8px; cursor: pointer; }
 .setting-check input[type="checkbox"] { flex: none; appearance: none; width: 16px; height: 16px; margin: 1px 0 0; background-color: var(--panel2); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
 .setting-check input[type="checkbox"]:hover { border-color: var(--line); }
 .setting-check input[type="checkbox"]:checked { background-color: var(--accent); border-color: var(--accent); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 12.5l5.5 5.5L20 6.5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: center; background-size: 12px 12px; }
-.setting-check input[type="checkbox"]:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(76, 141, 255, .35); }
+.setting-check input[type="checkbox"]:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(var(--accent-rgb), .35); }
 .setting-check span { color: var(--muted); font-size: 12.5px; line-height: 1.55; }
 /* 「恢复默认」推到标题栏最右（同 .hist-clear 的做法） */
 .set-reset { margin-left: auto; }
@@ -97,10 +155,10 @@ button { font: inherit; }
 /* ---- 输入控件 ----
    原生 <select> 的箭头每个平台一个样、也不吃主题色，所以 appearance:none 去掉、自己画一个，
    视觉上和工具栏的 .caret、折叠三角是一套语言。箭头是内联 SVG data URI——
-   它拿不到 currentColor，颜色只能写死成 --muted 的 #8b93a7；本项目只有一套深色主题，
-   写死不会出问题，但**改色板时要记得同步这一处**。
-   弹出的列表是系统绘制的，改不动；:root 上的 color-scheme:dark 会让它也是深色。 */
-.input { appearance: none; height: 32px; padding: 0 30px 0 10px; background-color: var(--panel2); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b93a7' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 9px center; border: 1px solid var(--border); border-radius: 8px; color: var(--fg); font: inherit; font-size: 13.5px; }
+   它拿不到 currentColor，颜色只能写死，**每个主题一份**（:root 上的 --chev 和
+   浅色那块里的 --chev）。改色板时要同步的不是这里，是那两条变量。
+   弹出的列表是系统绘制的，改不动；:root 上的 color-scheme 会跟着主题换深浅。 */
+.input { appearance: none; height: 32px; padding: 0 30px 0 10px; background-color: var(--panel2); background-image: var(--chev); background-repeat: no-repeat; background-position: right 9px center; border: 1px solid var(--border); border-radius: 8px; color: var(--fg); font: inherit; font-size: 13.5px; }
 /* 输入框不是下拉：没有箭头，右侧内边距收回，光标也换回文本的 */
 input.input { padding-right: 10px; background-image: none; cursor: text; }
 .input:hover { border-color: var(--line); }
@@ -116,9 +174,9 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
 .side-body > .pane { border-radius: 8px 0 0 8px; border-right: 0; }
 .side-body + .activity { margin-left: -1px; border: 1px solid var(--line); border-left: 0; border-radius: 0 8px 8px 0; }
 .act { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: none; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer; font-size: 15px; }
-.act:hover { color: var(--fg); background: rgba(76, 141, 255, .08); }
-.act.on { color: var(--accent); background: rgba(76, 141, 255, .16); }
-.act:active { color: var(--accent); background: rgba(76, 141, 255, .16); }
+.act:hover { color: var(--fg); background: rgba(var(--accent-rgb), .08); }
+.act.on { color: var(--accent); background: rgba(var(--accent-rgb), .16); }
+.act:active { color: var(--accent); background: rgba(var(--accent-rgb), .16); }
 .side-body { flex: none; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .side-body > .pane { flex: 1; }
 .pane { display: flex; flex-direction: column; background: var(--bg); min-height: 0; min-width: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
@@ -168,7 +226,7 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
 .editor-back { z-index: 0; background: var(--bg); color: var(--fg); overflow: hidden; pointer-events: none; }
 .editor-front { z-index: 2; background: transparent; color: transparent; caret-color: var(--fg); resize: none; outline: none; overflow: auto; }
 .editor-front::placeholder { color: var(--muted); }
-.editor-front::selection { background: rgba(76, 141, 255, .38); }
+.editor-front::selection { background: rgba(var(--accent-rgb), .38); }
 .editor-marks { z-index: 1; background: transparent; color: transparent; overflow: hidden; pointer-events: none; }
 /* 行号层（第 4 层）。它和上面三层盒子完全一样——这是行号能对齐的**全部依据**：
    某个逻辑行在编辑器里折成几行，这里对应的 .num-line 就占几行高，
@@ -199,7 +257,7 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
    height 给 1.6em 是为了让三角在这一行里垂直居中（父块正好一行高）。
    pointer-events:auto 必须显式给——整层 .editor-nums 是 none，否则点不到。 */
 .num-fold { position: absolute; top: 0; right: calc(100% + 8px); width: 14px; height: 1.6em; display: flex; align-items: center; justify-content: center; padding: 0; background: none; border: 0; border-radius: 3px; color: var(--muted); cursor: pointer; pointer-events: auto; }
-.num-fold:hover { color: var(--fg); background: rgba(76, 141, 255, .18); }
+.num-fold:hover { color: var(--fg); background: rgba(var(--accent-rgb), .18); }
 /* 折起来时三角转成 ▶ 指右 */
 .num-fold.on svg { transform: rotate(-90deg); }
 /* 行号槽与正文之间的竖向分隔线。画在 .editor-wrap 的伪元素上而不是行号层里：
@@ -229,9 +287,9 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
 .err.inline { border: 0; padding: 0; }
 .tree { flex: 1; overflow: auto; padding: 8px 4px; min-height: 0; }
 .row { display: flex; align-items: baseline; gap: 4px; white-space: pre; padding: 1px 6px; border-radius: 4px; }
-.children { margin-left: 14px; padding-left: 8px; border-left: 1px solid rgba(120, 150, 200, .25); }
-.row:hover { background: rgba(76, 141, 255, .08); }
-.row.active { background: rgba(76, 141, 255, .18); }
+.children { margin-left: 14px; padding-left: 8px; border-left: 1px solid var(--tree-line); }
+.row:hover { background: rgba(var(--accent-rgb), .08); }
+.row.active { background: rgba(var(--accent-rgb), .18); }
 /* 图标+文字按钮。原来限定在 .actions（左侧工具栏）内，现在树视图标题栏和历史的清空也用同一个，
    所以放开成全局类——在 .actions 里效果完全一样。 */
 /* 静息色一律用 --muted（白中透灰），和 .act / .icon-btn / .search-icon 保持一致；
@@ -245,7 +303,7 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
 .menu-wrap { position: relative; display: inline-flex; }
 .caret { display: inline-block; width: 0; height: 0; margin-left: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 4px solid currentColor; vertical-align: middle; }
 .actions .menu::before { content: ""; position: absolute; top: -8px; left: 0; right: 0; height: 8px; }
-.menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; min-width: 160px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,.45); display: flex; flex-direction: column; }
+.menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; min-width: 160px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px var(--shadow); display: flex; flex-direction: column; }
 /* 往右展开会超出窗格时改成往左展开（对齐到按钮右边缘）。
    .pane 是 overflow:hidden，菜单伸出去就被切掉——实测 390px 下 Unicode 菜单
    超出窗格 37px、超出窗口 34px。翻过来之后它右边缘落在按钮右边缘上，
@@ -276,20 +334,20 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
    新增按钮一律挂到这里，不要单独写 hover/active，**也不要在静息态改成 --fg 或 --accent**——
    一旦某个按钮是纯白或蓝色，同一个界面里就会看出「按钮颜色不统一」（这是用户明确提过的）。
    唯一的例外是 .act.on：活动栏里当前打开的那个面板用强调色，那是「选中态」而不是静息色。 */
-.tool-btn:hover:not(:disabled), .icon-btn:hover:not(:disabled), .search-icon:hover:not(:disabled), .menu-item:hover:not(:disabled), .twist:hover:not(:disabled), .hist-del:hover:not(:disabled), .toast-x:hover:not(:disabled) { color: var(--fg); background: rgba(76, 141, 255, .08); border-color: transparent; }
-.tool-btn:active:not(:disabled), .icon-btn:active:not(:disabled), .search-icon:active:not(:disabled), .menu-item:active:not(:disabled), .twist:active:not(:disabled), .hist-del:active:not(:disabled), .toast-x:active:not(:disabled) { color: var(--accent); background: rgba(76, 141, 255, .16); border-color: transparent; }
+.tool-btn:hover:not(:disabled), .icon-btn:hover:not(:disabled), .search-icon:hover:not(:disabled), .menu-item:hover:not(:disabled), .twist:hover:not(:disabled), .hist-del:hover:not(:disabled), .toast-x:hover:not(:disabled) { color: var(--fg); background: rgba(var(--accent-rgb), .08); border-color: transparent; }
+.tool-btn:active:not(:disabled), .icon-btn:active:not(:disabled), .search-icon:active:not(:disabled), .menu-item:active:not(:disabled), .twist:active:not(:disabled), .hist-del:active:not(:disabled), .toast-x:active:not(:disabled) { color: var(--accent); background: rgba(var(--accent-rgb), .16); border-color: transparent; }
 /* 顶栏那个 GitHub 入口是**跳到站外的链接**，不是控件，按下去不该亮起强调色——
    那圈蓝的含义是「这个按钮已被选中/激活」，对一个点完就离开本站的链接毫无意义。
    它挂的正是 .icon-btn，所以要在这条按下规则之后把它单独摘出来。
    悬停态**不动**：悬停只是「这儿能点」的提示，跟旁边那排图标按钮保持一致。
    权重必须比上面那条高一级（多一个 .topbar-link），否则 (0,3,0) 打平后靠源码顺序也压不住。 */
-.icon-btn.topbar-link:active:not(:disabled) { color: var(--fg); background: rgba(76, 141, 255, .08); }
+.icon-btn.topbar-link:active:not(:disabled) { color: var(--fg); background: rgba(var(--accent-rgb), .08); }
 /* 下拉项的「当前值」和「键盘/鼠标高亮」。
    这两条**必须排在上面那对 :hover/:active 之后**：选择器权重都是 (0,2,0)，靠源码顺序决胜负。
    放前面的话，鼠标一划过当前值那一项它就变回 --fg，"哪个是选中的"就看不出来了。
    .hi 只画底色不画文字色，所以当前值那项被划过时文字仍是强调色。 */
 .menu-item.on { color: var(--accent); }
-.menu-item.hi { background: rgba(76, 141, 255, .08); }
+.menu-item.hi { background: rgba(var(--accent-rgb), .08); }
 /* 悬停提示：原生 title 由系统绘制、无法跟随主题（在暗色下仍是白底），故改用自带提示。
    只给「纯图标」按钮挂 data-tip；有文字（图标+文字或纯文字）的按钮不加，避免废话。
    提示挂在按钮下方，贴右边缘的按钮改为向左展开，防止被 .pane 的 overflow:hidden 裁掉。 */
@@ -305,7 +363,7 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
 [data-tip]::after {
   content: attr(data-tip); position: absolute; top: calc(100% + 7px); left: 50%; transform: translateX(-50%); z-index: 40;
   padding: 5px 9px; background: var(--panel2); color: var(--fg); border: 1px solid var(--border); border-radius: 6px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, .45); font-size: 12.5px; line-height: 1.35; white-space: nowrap;
+  box-shadow: 0 6px 18px var(--shadow); font-size: 12.5px; line-height: 1.35; white-space: nowrap;
   pointer-events: none; display: none;
 }
 [data-tip]:hover::after { display: block; animation: tip-in .12s ease .28s backwards; }
@@ -350,7 +408,7 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
    以及它是个 <a> 得去掉下划线。
    静态色**不要**在这里写 color——写了就违反「静息一律 --muted」那条规矩。 */
 .topbar-link { margin-left: auto; text-decoration: none; }
-.search-pill { display: flex; align-items: center; gap: 2px; width: min(420px, 100%); padding: 3px 6px 3px 14px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 2px 10px rgba(0, 0, 0, .35); transition: border-color .15s; }
+.search-pill { display: flex; align-items: center; gap: 2px; width: min(420px, 100%); padding: 3px 6px 3px 14px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 2px 10px var(--shadow-soft); transition: border-color .15s; }
 .search-pill:focus-within { border-color: var(--accent); }
 .search-input { flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: var(--fg); font: inherit; font-size: 14px; padding: 4px 0; }
 .search-input::placeholder { color: var(--muted); }
@@ -365,8 +423,8 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
 .hist-row { display: flex; align-items: center; gap: 4px; margin: 0 2px 6px; padding: 7px 6px 7px 10px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; }
 /* 悬停和按下都高亮**整张卡**。按下用 :has() 限定「按在可点区域」——
    否则按右边的删除 × 时整张卡也会跟着亮，像是要恢复。 */
-.hist-row:hover { border-color: var(--line); background: rgba(76, 141, 255, .08); }
-.hist-row:has(.hist-main:active) { border-color: var(--accent); background: rgba(76, 141, 255, .16); }
+.hist-row:hover { border-color: var(--line); background: rgba(var(--accent-rgb), .08); }
+.hist-row:has(.hist-main:active) { border-color: var(--accent); background: rgba(var(--accent-rgb), .16); }
 .hist-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; text-align: left; background: none; border: 0; border-radius: 6px; color: var(--fg); padding: 0; cursor: pointer; font: inherit; }
 /* 第一行：相对时间 + 绝对时间 · 大小。meta 靠右并允许省略，
    否则面板拖窄时这两个不可收缩的块会顶出去。 */
@@ -412,13 +470,13 @@ input.input { padding-right: 10px; background-image: none; cursor: text; }
    文字与图标继承 .toast 的 color，所以每型只需一条规则把 --tint / color / border-color 一起给出。
    max-height 与 overflow 是给退场动画用的：max-height 从 auto 收不到 0，得先有个具体起始值
    （正文永远单行，实测一条约 42px，60px 够用）。 */
-.toast { pointer-events: auto; cursor: default; display: flex; align-items: center; gap: 7px; max-width: 340px; margin-top: 6px; max-height: 60px; overflow: hidden; padding: 9px 8px 9px 13px; background-color: var(--panel2); background-image: linear-gradient(var(--tint, transparent), var(--tint, transparent)); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 22px rgba(0, 0, 0, .5); color: var(--fg); font-size: 13.5px; animation: toast-in .16s ease-out; }
+.toast { pointer-events: auto; cursor: default; display: flex; align-items: center; gap: 7px; max-width: 340px; margin-top: 6px; max-height: 60px; overflow: hidden; padding: 9px 8px 9px 13px; background-color: var(--panel2); background-image: linear-gradient(var(--tint, transparent), var(--tint, transparent)); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 22px var(--shadow); color: var(--fg); font-size: 13.5px; animation: toast-in .16s ease-out; }
 .toast-icon { flex: none; width: 15px; height: 15px; }
-.toast.primary { --tint: rgba(76, 141, 255, .13); color: var(--accent); border-color: rgba(76, 141, 255, .35); }
-.toast.success { --tint: rgba(154, 230, 160, .13); color: var(--str); border-color: rgba(154, 230, 160, .35); }
-.toast.info { --tint: rgba(139, 147, 167, .13); color: var(--muted); border-color: rgba(139, 147, 167, .35); }
-.toast.warning { --tint: rgba(240, 180, 107, .13); color: var(--num); border-color: rgba(240, 180, 107, .35); }
-.toast.error { --tint: rgba(255, 107, 107, .13); color: var(--err); border-color: rgba(255, 107, 107, .35); }
+.toast.primary { --tint: rgba(var(--accent-rgb), .13); color: var(--accent); border-color: rgba(var(--accent-rgb), .35); }
+.toast.success { --tint: rgba(var(--str-rgb), .13); color: var(--str); border-color: rgba(var(--str-rgb), .35); }
+.toast.info { --tint: rgba(var(--muted-rgb), .13); color: var(--muted); border-color: rgba(var(--muted-rgb), .35); }
+.toast.warning { --tint: rgba(var(--num-rgb), .13); color: var(--num); border-color: rgba(var(--num-rgb), .35); }
+.toast.error { --tint: rgba(var(--err-rgb), .13); color: var(--err); border-color: rgba(var(--err-rgb), .35); }
 .toast-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .toast-x { flex: none; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; background: none; border: 0; border-radius: 50%; color: var(--muted); cursor: pointer; }
 /* 进场：从上方落下（新消息出现在堆叠顶部） */

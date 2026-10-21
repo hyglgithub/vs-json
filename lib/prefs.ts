@@ -30,6 +30,12 @@ export const SIDE_MAX = 80;
 
 export type SortMode = "off" | "asc" | "desc";
 
+// 界面主题。清单和设置面板的下拉、存量校验共用这一份。
+// 默认浅色（SETTINGS_DEFAULTS.theme）。旧版偏好袋里没有 theme 字段，读出来就走默认值，
+// 所以升级后没手动选过深色的用户会切到浅色——这是用户明确要的默认值。
+export const THEMES = ["dark", "light"] as const;
+export type Theme = (typeof THEMES)[number];
+
 // 右侧面板的四个 id，外加 "none"（四个都收起）。
 // 放在这里而不是 JsonTool.tsx：rightPanel 现在是偏好的一项，**校验存量时要照同一份清单认值**，
 // 而界面上的那张注册表也得和它同源——两处各写一份的话，将来加面板就会出现
@@ -39,6 +45,7 @@ export type PanelId = (typeof PANEL_IDS)[number];
 export type RightPanel = PanelId | "none";
 
 export type Prefs = {
+  theme: Theme;
   indent: number;
   fontSize: number;
   showLineNums: boolean;
@@ -63,6 +70,7 @@ export type Prefs = {
 // 站在设置面板上点它的人会被当场弹到树形视图去——按钮把自己脚下那块地抽走了。
 // 它不是设置项，没有控件，也没有哪个用户会认为「恢复默认设置」该动它。
 export const SETTINGS_DEFAULTS: Prefs = {
+  theme: "light",
   indent: 2,
   fontSize: 15,
   showLineNums: false,
@@ -87,10 +95,13 @@ function sanitize(raw: unknown): Prefs {
   if (o.v !== PREFS_V) return { ...SETTINGS_DEFAULTS };
   const oneOf = (v: unknown, allowed: number[], dflt: number) =>
     typeof v === "number" && allowed.indexOf(v) !== -1 ? v : dflt;
-  // rightPanel 是字符串枚举，和缩进那类数字枚举分开验：类型得先落地才能用 indexOf。
+  // rightPanel / theme 是字符串枚举，和缩进那类数字枚举分开验：类型得先落地才能用 indexOf。
   const isRightPanel = (v: unknown): v is RightPanel =>
     v === "none" || (typeof v === "string" && (PANEL_IDS as readonly string[]).indexOf(v) !== -1);
+  const isTheme = (v: unknown): v is Theme =>
+    typeof v === "string" && (THEMES as readonly string[]).indexOf(v) !== -1;
   return {
+    theme: isTheme(o.theme) ? o.theme : SETTINGS_DEFAULTS.theme,
     indent: oneOf(o.indent, INDENT_STEPS, SETTINGS_DEFAULTS.indent),
     fontSize: oneOf(o.fontSize, FONT_SIZES, SETTINGS_DEFAULTS.fontSize),
     showLineNums: typeof o.showLineNums === "boolean" ? o.showLineNums : SETTINGS_DEFAULTS.showLineNums,

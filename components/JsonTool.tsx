@@ -7,13 +7,13 @@ import type { ChangeEvent, CSSProperties, DragEvent, ReactNode } from "react";
 
 import { BS, HIST_KEY, HIST_MAX, HIST_MAX_CHARS, NL1, SAMPLE, TOAST_MAX, TOAST_MS, TOAST_OUT_MS } from "../lib/constants";
 import type { HistoryEntry, ToastKind } from "../lib/constants";
-import { collectPaths, computeStats, deepSort, findMatches, foldRanges, isObject, joinKey } from "../lib/json";
+import { collectPaths, computeStats, deepSort, findMatches, foldRanges } from "../lib/json";
 import type { FoldRange, JsonValue, Match } from "../lib/json";
 import { escapeText, escapeUnicode, reformatJson, unescapeText, unescapeUnicode } from "../lib/text";
 import { DRAFT_MAX_CHARS, DRAFT_WRITE_MS, loadDraft, saveDraft } from "../lib/draft";
 import { fmtBytes, fmtFileStamp } from "../lib/format";
 import { clampSide, loadPrefs, PREFS_WRITE_MS, savePrefs, SETTINGS_DEFAULTS } from "../lib/prefs";
-import type { PanelId, Prefs, RightPanel, SortMode } from "../lib/prefs";
+import type { PanelId, Prefs, RightPanel, SortMode, Theme } from "../lib/prefs";
 import Editor from "./Editor";
 import Toasts from "./Toasts";
 import type { Toast } from "./Toasts";
@@ -26,6 +26,10 @@ import TreePanel from "./panels/TreePanel";
 // 一个逻辑行一个 <div>，所以行数直接等于 DOM 节点数。超过这个数就不画行号了：
 // 输入框本身仍然正常，只是左边没有号码。别把它当成"性能优化"删掉。
 const LINE_NUM_MAX = 20000;
+
+// 正文上限。超过它树形视图停用、只留格式化与压缩；树默认全展开的初始也用它兜底，
+// 否则一个几百 MB 的草稿会在首帧就把所有路径走一遍。**两处必须是同一个数**。
+const MAX_BYTES = 5 * 1024 * 1024;
 
 // 「窄窗口」的分界，**必须和 globals.css 里那条 `@media (max-width: 900px)` 一致**。
 // CSS 在那条里把 .main 翻成网格、让右侧面板盖住正文；JS 这边只用它决定开局要不要
@@ -48,6 +52,16 @@ export default function JsonTool() {
   // 惰性初始化——所以第一帧画出来就已经是恢复后的内容，不会先闪一帧空编辑器。
   // 这正是 app/page.tsx 关掉 SSR 换来的东西：**别改成在 effect 里补一次 setRaw**。
   const [raw, setRaw] = useState(loadDraft);
+  // 界面主题。和别的偏好一样是**惰性初始化**出来的，所以第一帧就是用户选的那套配色。
+  const [theme, setTheme] = useState<Theme>(prefs.theme);
+  // 主题变量挂在 <html> 上（globals.css 的 :root[data-theme="light"]），不是 .app 上：
+  // body 的背景、color-scheme（原生控件与滚动条）都在 .app 外面，挂在 .app 管不到它们。
+  // **useLayoutEffect 而不是 useEffect**：它在浏览器绘制之前跑完，所以切主题和首帧都不会
+  // 先画一帧旧配色再跳。JS 加载前那段空白由 app/layout.tsx 的引导脚本提前挂好，
+  // 也不会先闪一帧深色。
+  useLayoutEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
   const [indent, setIndent] = useState(prefs.indent);
   // 编辑器字号。只作用于左侧输入框（含行号），不影响右侧树和面板——
   // 这是代码编辑器里「字体大小」的通常含义。默认 15 对齐 body 的 font。
@@ -98,7 +112,19 @@ export default function JsonTool() {
     if (!menu || !pane) return;
     setMenuFlip(menu.getBoundingClientRect().right > pane.getBoundingClientRect().right - 8);
   }, [openMenu]);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set(["$"]));
+  // 树形视图默认**全展开**：初值照着当前正文把所有路径一次收齐（和「全展开」按钮同一个
+  // collectPaths）。这是一次性初值——之后粘贴、编辑、格式化都不会再动它，否则用户手动
+  // 收起的节点会被每一次按键重新打开。正文不合法或超限时只保留根。
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    const all = new Set<string>(["$"]);
+    if (!raw.trim() || raw.length > MAX_BYTES) return all;
+    try {
+      collectPaths(JSON.parse(raw) as JsonValue, "$", all);
+    } catch {
+      // 非法 JSON：树本来就是空态，根足够了。
+    }
+    return all;
+  });
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -169,10 +195,10 @@ export default function JsonTool() {
   // **防抖是必须的，不是优化**：拖 splitter 时 sideWidth 每帧都在变，一次拖动能触发
   // 一两百次 setItem，而 localStorage 是同步 IO，不防抖拖起来会明显发顿。
   // 依赖是下面拼出来的那个对象——任何一项变了引用就变，effect 自然重跑；
-  // 也可以理解成「这六项就是一个整体，落盘时就该一起落」。
+  // 也可以理解成「这七项就是一个整体，落盘时就该一起落」。
   // rightPanel 也在里面：点一下活动栏就改一次引用，防抖之后落一次盘，代价极小。
-  const prefsNow = useMemo((): Prefs => ({ indent, fontSize, showLineNums, sortMode, sideWidth, rightPanel }),
-    [indent, fontSize, showLineNums, sortMode, sideWidth, rightPanel]);
+  const prefsNow = useMemo((): Prefs => ({ theme, indent, fontSize, showLineNums, sortMode, sideWidth, rightPanel }),
+    [theme, indent, fontSize, showLineNums, sortMode, sideWidth, rightPanel]);
   useEffect(() => {
     const t = window.setTimeout(() => savePrefs(prefsNow), PREFS_WRITE_MS);
     return () => window.clearTimeout(t);
@@ -210,7 +236,7 @@ export default function JsonTool() {
     }
   }, [raw]);
 
-  const tooBig = raw.length > 5 * 1024 * 1024;
+  const tooBig = raw.length > MAX_BYTES;
   const ready = !parsed.empty && !parsed.error;
 
   // 行号按 \n 切成逻辑行：折行的续行**不编号**，所以号码和 JSON 的逻辑行严格一一对应。
@@ -661,13 +687,10 @@ export default function JsonTool() {
   // 它们的结果就在眼前（输入框或树立刻变了），再加一条气泡只是噪音。
   const doSample = () => {
     replaceAll(SAMPLE);
-    // 把示例的**第一层全部展开**。树默认只开根，那样点完「示例」看到的是一排收起来的
-    // [10] / {6}，十条教程全藏在点击后面。展开一层正好够：教程条目和「这份数据」的字段
-    // 都在第一层里露出来，而它自己那层嵌套仍收着，正好留给用户自己点开看折叠效果。
-    // 路径用 joinKey 拼而不是手写：像「这份数据」这种非标识符的键会被转义成 $["这份数据"]。
-    const open = new Set<string>(["$"]);
-    const root = JSON.parse(SAMPLE) as JsonValue;
-    if (isObject(root)) Object.keys(root).forEach((k) => open.add(joinKey("$", k)));
+    // 和树的新默认值保持一致：示例一载入就全展开，十条教程和「这份数据」的嵌套都直接
+    // 看得见。路径交给 collectPaths 拼，非标识符键（「这份数据」）会自动转义成 $["这份数据"]。
+    const open = new Set<string>();
+    collectPaths(JSON.parse(SAMPLE) as JsonValue, "$", open);
     setExpanded(open);
   };
   // 保存 = 把当前内容记进保存记录。这是它唯一的入口，没有自动记录。
@@ -711,6 +734,7 @@ export default function JsonTool() {
   // 一律给提示：几项本来就在默认值时屏幕上什么都不会变，不提示就像按钮坏了
   // （和 格式化 是同一条规矩）。
   const doResetSettings = () => {
+    setTheme(SETTINGS_DEFAULTS.theme);
     setIndent(SETTINGS_DEFAULTS.indent);
     setFontSize(SETTINGS_DEFAULTS.fontSize);
     setShowLineNums(SETTINGS_DEFAULTS.showLineNums);
@@ -752,8 +776,8 @@ export default function JsonTool() {
       id: "settings",
       tip: "设置",
       icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>,
-      content: <SettingsPanel indent={indent} sortMode={sortMode} fontSize={fontSize} showLineNums={showLineNums}
-        onIndent={setIndent} onSortMode={setSortMode} onFontSize={setFontSize} onShowLineNums={setShowLineNums} onReset={doResetSettings} />,
+      content: <SettingsPanel theme={theme} indent={indent} sortMode={sortMode} fontSize={fontSize} showLineNums={showLineNums}
+        onTheme={setTheme} onIndent={setIndent} onSortMode={setSortMode} onFontSize={setFontSize} onShowLineNums={setShowLineNums} onReset={doResetSettings} />,
     },
   ];
   const openPanel = panels.find((p) => p.id === rightPanel);
