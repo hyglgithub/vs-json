@@ -7,7 +7,7 @@
 
 **纯前端，没有后端**。所有 JSON 处理都在浏览器里完成，不联网、没有接口、不往任何地方发数据。
 
-**在线使用：** <https://hyglgithub.github.io/vs-json/>（什么都不用装）
+**在线使用：** <https://vs-json-one.vercel.app/>（什么都不用装）
 
 ![界面](docs/screenshot.png)
 
@@ -137,19 +137,13 @@ types/assets.d.ts       *.css 的环境声明
 
 ## 部署
 
-线上那份在 **GitHub Pages**：<https://hyglgithub.github.io/vs-json/>，由 `.github/workflows/pages.yml` 在每次 push 到 main 时构建并发布。仓库里**不会**有构建产物，它是 GitHub 的 runner 上打包完直接传上去的。
+线上那份在 **Vercel**：<https://vs-json-one.vercel.app/>。项目已关联 GitHub 仓库，每次 push 到 `main` 由 Vercel 自动构建发布，仓库里**不会**有构建产物。
 
-它是**静态导出**的产物（`output: 'export'`）。三件事必须同时成立，少一件就是白屏：
+- 框架预设选 Next.js，构建命令就是 `next build`，不需要额外配置或环境变量。
+- `metadataBase` 默认取 Vercel 注入的 `VERCEL_PROJECT_PRODUCTION_URL`；绑定自定义域名后，用 `NEXT_PUBLIC_SITE_URL` 覆盖它，否则分享卡片的图片会指向 Vercel 默认域名。
+- GitHub Actions 只保留 `ci.yml`（typecheck + build）。之前的 GitHub Pages 静态导出已停用，`pages.yml` 和 `public/.nojekyll` 一并删除。
 
-| 条件 | 在哪 | 少了会怎样 |
-|---|---|---|
-| `output: 'export'` | `next.config.ts` | 产物不是纯静态文件，Pages 发不了 |
-| `basePath: '/vs-json'` | `next.config.ts` | Pages 的项目站点挂在 `/vs-json/` 这层子路径下，资源 URL 不带前缀就全部 404 |
-| `.nojekyll` | `public/.nojekyll` | Pages 默认拿 Jekyll 处理文件，而 Jekyll 忽略 `_` 开头的目录——Next 的资源恰好全在 `_next/` 里 |
-
-前两项由 `GITHUB_PAGES=1` 这个环境变量控制，**只在 CI 里设**。本地 `npm run dev` / `npm run build` 和部署到 Vercel / Netlify 都不受影响，仍是干净的 `/`。
-
-> fork 一份自己部署：仓库 Settings → Pages → Source 选 **GitHub Actions**，然后把 `next.config.ts` 里的 `basePath` 改成你自己的仓库名。
+> fork 一份自己部署：在 Vercel 里 Import Git Repository，选自己的仓库，框架会自动识别为 Next.js；绑定域名后按需设置 `NEXT_PUBLIC_SITE_URL`。
 
 ## License
 

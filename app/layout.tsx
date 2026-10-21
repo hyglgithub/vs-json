@@ -32,7 +32,7 @@ export const viewport: Viewport = {
 };
 
 // 标签页上的文字就是 title。图标不在这里写 icons 字段——app/ 下的 icon.png /
-// apple-icon.png 由 App Router 的文件约定自动挂上（连带 basePath 也由它拼对）。
+// apple-icon.png 由 App Router 的文件约定自动挂上。
 //
 // **这里只能有一个基名为 icon 的文件。** 文件约定对每个基名只解析一个文件，按扩展名
 // 优先级挑（png 排在 svg 前），所以 icon.svg 和 icon.png 并存时 SVG 会被静默丢掉——
@@ -56,13 +56,16 @@ const TITLE = 'VS Json - ' + TAGLINE;
 // 描述是标签页标题那半句的完整版：标题里放不下的「希望能帮到你」在这儿。
 const DESCRIPTION = TAGLINE + '，希望能帮到你';
 
-// 分享出去的预览必须是**绝对地址**，所以得给 metadataBase。默认值是本地开发
-// 地址；CI 里由 pages.yml 传 NEXT_PUBLIC_SITE_URL。
-//
-// 注意 og:image 那条路**不经过 basePath**：Next 会给图标、静态资源这些走文件约定
-// 的链接自动加前缀，但 Open Graph 的图片路径它原样输出。所以线上那个值必须自己
-// 带上 /vs-json（pages.yml 里就是这么写的），否则分享出去图是 404。
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3112';
+// 分享出去的预览必须是**绝对地址**，所以得给 metadataBase。
+// 本地开发默认 http://localhost:3112；Vercel 构建时会注入
+// VERCEL_PROJECT_PRODUCTION_URL（如 vs-json-one.vercel.app），用它拼出线上地址，
+// 分享卡片里的 /screenshot.png 才不会是 localhost。绑了自定义域名就用
+// NEXT_PUBLIC_SITE_URL 覆盖。
+const SITE_URL =
+  process.env.NEXT_PUBLIC_SITE_URL ||
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? 'https://' + process.env.VERCEL_PROJECT_PRODUCTION_URL
+    : 'http://localhost:3112');
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
